@@ -288,7 +288,7 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
         salary_min: form.salary_min ? parseFloat(form.salary_min) : undefined,
         salary_max: form.salary_max ? parseFloat(form.salary_max) : undefined,
         positions: form.positions ? parseInt(form.positions) : 1,
-        skills_required: form.skills_required ? form.skills_required.split(",").map(s => s.trim()).filter(Boolean) : [],
+        skills_required: form.skills_required ? form.skills_required.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
       });
       toast.success("Job updated");
       onSaved();

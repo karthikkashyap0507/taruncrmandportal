@@ -293,7 +293,7 @@ function EditCandidateModal({ candidate, onClose, onSaved }: { candidate: any; o
       await candidatesApi.update(candidate.id, {
         ...form,
         experience_years: form.experience_years ? parseFloat(form.experience_years) : undefined,
-        skills: form.skills ? form.skills.split(",").map(s => s.trim()).filter(Boolean) : [],
+        skills: form.skills ? form.skills.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
       });
       toast.success("Candidate updated");
       onSaved();
