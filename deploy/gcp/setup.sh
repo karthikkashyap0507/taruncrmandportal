@@ -21,7 +21,8 @@ apt_install python3-venv python3-dev build-essential nginx certbot python3-certb
 
 step "Node.js 22 and pm2"
 if ! command -v node >/dev/null || [ "$(node -v | sed 's/^v//; s/\..*//')" -lt 20 ]; then
-  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  # NodeSource's installer runs its own apt-get, so it needs the no-prompt settings too
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a bash -
   apt_install nodejs
 fi
 command -v pm2 >/dev/null || sudo npm install -g pm2
