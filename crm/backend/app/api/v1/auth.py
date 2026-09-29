@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from pydantic import BaseModel, EmailStr, field_validator
 import re
 
@@ -85,6 +85,14 @@ async def _log_activity(db: AsyncSession, user_id: int, action: ActivityType, de
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(payload: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # Public sign-up only creates the first account, which becomes the owner.
+    # After that, the owner adds team members from the Team page.
+    if await db.scalar(select(func.count()).select_from(User)):
+        raise HTTPException(
+            status_code=403,
+            detail="Registration is closed. Ask your CRM owner to add you from the Team page.",
+        )
+
     # Check email uniqueness
     result = await db.execute(select(User).where(User.email == payload.email))
     if result.scalar_one_or_none():
@@ -101,7 +109,7 @@ async def register(payload: RegisterRequest, request: Request, db: AsyncSession 
         email=payload.email,
         phone=payload.phone,
         password_hash=hash_password(payload.password),
-        role=payload.role,
+        role=UserRole.owner,
         is_active=True,
         is_verified=True,  # No OTP per requirements
         login_count=1,
