@@ -1,0 +1,20 @@
+# Dependencies & build output (rebuilt on the server)
+node_modules/
+.next/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.tsbuildinfo
+
+# Runtime data (the apps recreate these folders at startup)
+*.db
+*.sqlite
+*.sqlite3
+uploads/
+
+# Logs, backups & local tool settings
+*.log
+*.bak
+.claude/
