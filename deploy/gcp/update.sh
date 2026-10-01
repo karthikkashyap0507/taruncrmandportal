@@ -17,6 +17,13 @@ main() {
     git -C "$repo" pull --ff-only
   fi
 
+  echo "==> Backing up databases before the update"
+  python3 "$repo/deploy/gcp/backup.py" backup --dest "$HOME/backups"
+
+  echo "==> Nightly backups (02:30 server time, 14 days kept)"
+  local cron_line="30 2 * * * cd $repo && python3 deploy/gcp/backup.py backup --dest $HOME/backups >> $HOME/backups/backup.log 2>&1"
+  ( crontab -l 2>/dev/null | grep -v "deploy/gcp/backup.py" || true; echo "$cron_line" ) | crontab -
+
   echo "==> Backend dependencies"
   for app in backend crm/backend; do
     "$repo/$app/venv/bin/pip" install -q --upgrade pip

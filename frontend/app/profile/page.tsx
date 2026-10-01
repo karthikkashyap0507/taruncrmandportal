@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { profilesApi } from "@/services/api";
+import { profilesApi, apiError } from "@/services/api";
 import type { Candidate } from "@/types";
 
 interface ExperienceItem {
@@ -96,8 +96,7 @@ export default function ProfilePage() {
       });
       alert("Profile saved successfully!");
     } catch (err) {
-      console.error("Failed to save profile", err);
-      alert("Failed to save profile");
+      alert(apiError(err, "Failed to save profile"));
     } finally {
       setSaving(false);
     }

@@ -1,23 +1,40 @@
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
-logger = logging.getLogger(__name__)
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import String, cast
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from app.auth.deps import get_current_user, require_roles
+from app.auth.deps import get_current_user, get_optional_user, require_roles
 from app.core.database import get_db
+from app.core.files import own_resume_ref, sign_resume_url
 from app.models.application import Application, ApplicationStatus
+from app.models.application_event import ApplicationEvent
 from app.models.candidate import Candidate
 from app.models.company import Company
 from app.models.job import Job, JobStatus
 from app.models.recruiter import Recruiter
+from app.models.saved_job import SavedJob
 from app.models.user import User, UserRole
-from app.schemas.job import ApplicationCreate, ApplicationResponse, ApplicationUpdate, CandidateInfo, CompanyResponse, JobCreate, JobResponse, JobUpdate
+from app.schemas.job import (
+    ApplicationCreate,
+    ApplicationResponse,
+    ApplicationUpdate,
+    CandidateInfo,
+    CompanyResponse,
+    JobCreate,
+    JobResponse,
+    JobUpdate,
+)
+from app.services import ats
+from app.services.audit import audit
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+EMPLOYER_ROLES = (UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)
 
 # ─────────────────────────────────────────────
 # ATS Score Computation
@@ -127,20 +144,20 @@ def job_to_response(job: Job) -> JobResponse:
     )
 
 
-def _build_app_response(app: Application, db: Session) -> ApplicationResponse:
+def _build_app_response(app: Application) -> ApplicationResponse:
+    """Application as seen by an authorised viewer. Expects candidate + user preloaded.
+    Resume links are signed and expire, so they can't be shared onwards."""
     candidate_info = None
-    cand = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
-    if cand:
-        cand_user = db.query(User).filter(User.id == cand.user_id).first()
-        if cand_user:
-            candidate_info = CandidateInfo(
-                user_id=cand_user.id,
-                name=cand_user.name,
-                email=cand_user.email,
-                headline=cand.headline,
-                skills=cand.skills or [],
-                resume_url=app.resume_url or cand.resume_url,
-            )
+    cand = app.candidate
+    if cand and cand.user:
+        candidate_info = CandidateInfo(
+            user_id=cand.user.id,
+            name=cand.user.name,
+            email=cand.user.email,
+            headline=cand.headline,
+            skills=cand.skills or [],
+            resume_url=sign_resume_url(app.resume_url or cand.resume_url),
+        )
     return ApplicationResponse(
         id=app.id,
         candidate_id=app.candidate_id,
@@ -152,9 +169,47 @@ def _build_app_response(app: Application, db: Session) -> ApplicationResponse:
         phone=app.phone,
         years_experience=app.years_experience,
         cover_letter=app.cover_letter,
-        resume_url=app.resume_url or (candidate_info.resume_url if candidate_info else None),
+        resume_url=sign_resume_url(app.resume_url or (cand.resume_url if cand else None)),
         candidate_info=candidate_info,
     )
+
+
+def _recruiter_for(db: Session, user: User) -> Recruiter | None:
+    return db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
+
+
+def _can_manage(user: User, recruiter: Recruiter | None, job: Job) -> bool:
+    """Recruiters manage their own jobs; company admins manage their company's jobs;
+    platform admins manage everything."""
+    if user.role == UserRole.platform_admin:
+        return True
+    if not recruiter:
+        return False
+    if job.recruiter_id == recruiter.id:
+        return True
+    return user.role == UserRole.company_admin and job.company_id == recruiter.company_id
+
+
+def _manageable_job(db: Session, user: User, job_id: int, with_company: bool = False) -> Job:
+    q = db.query(Job)
+    if with_company:
+        q = q.options(joinedload(Job.company))
+    job = q.filter(Job.id == job_id).first()
+    if not job or not _can_manage(user, _recruiter_for(db, user), job):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+def _notify_status(db: Session, app: Application, new_status: str) -> None:
+    try:
+        from app.services.email import send_status_update_email
+        cand = db.query(Candidate).options(joinedload(Candidate.user)).filter(Candidate.id == app.candidate_id).first()
+        job = db.query(Job).options(joinedload(Job.company)).filter(Job.id == app.job_id).first()
+        if cand and cand.user and job:
+            send_status_update_email(cand.user.email, cand.user.name, job.title, new_status,
+                                     job.company.name if job.company else "")
+    except Exception:
+        logger.exception("status email failed")
 
 
 # ─────────────────────────────────────────────
@@ -211,22 +266,29 @@ def list_jobs(
 
 @router.get("/recruiter/my", response_model=list[JobResponse])
 def list_my_jobs(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)),
+    user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
-    recruiter = db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
+    recruiter = _recruiter_for(db, user)
     if not recruiter:
         raise HTTPException(status_code=404, detail="Recruiter profile not found")
-    jobs = db.query(Job).options(joinedload(Job.company)).filter(Job.recruiter_id == recruiter.id).all()
+    q = db.query(Job).options(joinedload(Job.company))
+    if user.role == UserRole.company_admin:
+        q = q.filter(Job.company_id == recruiter.company_id)
+    else:
+        q = q.filter(Job.recruiter_id == recruiter.id)
+    jobs = q.order_by(Job.id.desc()).offset(skip).limit(limit).all()
     return [job_to_response(j) for j in jobs]
 
 
 @router.get("/recruiter/company", response_model=CompanyResponse)
 def get_my_company(
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)),
+    user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
-    recruiter = db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
+    recruiter = _recruiter_for(db, user)
     if not recruiter:
         raise HTTPException(status_code=404, detail="Recruiter profile not found")
     company = db.query(Company).filter(Company.id == recruiter.company_id).first()
@@ -243,52 +305,100 @@ def list_my_applications(
     candidate = db.query(Candidate).filter(Candidate.user_id == user.id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate profile not found")
-    applications = db.query(Application).filter(Application.candidate_id == candidate.id).all()
-    return [ApplicationResponse.model_validate(app) for app in applications]
+    applications = (db.query(Application).filter(Application.candidate_id == candidate.id)
+                    .order_by(Application.id.desc()).all())
+    out = []
+    for app in applications:
+        item = ApplicationResponse.model_validate(app)
+        item.resume_url = sign_resume_url(app.resume_url)
+        out.append(item)
+    return out
 
 
 @router.patch("/applications/{application_id}", response_model=ApplicationResponse)
 def update_application(
     application_id: int,
     payload: ApplicationUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)),
+    user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
-    recruiter = db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
-    if not recruiter:
-        raise HTTPException(status_code=404, detail="Recruiter profile not found")
-    app = db.query(Application).join(Job).filter(
-        Application.id == application_id, Job.recruiter_id == recruiter.id
-    ).first()
-    if not app:
+    app = (db.query(Application)
+           .options(joinedload(Application.candidate).joinedload(Candidate.user), joinedload(Application.job))
+           .filter(Application.id == application_id).first())
+    if not app or not _can_manage(user, _recruiter_for(db, user), app.job):
         raise HTTPException(status_code=404, detail="Application not found")
-    old_status = app.status
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(app, key, value)
+    if payload.status is None:
+        return _build_app_response(app)
+
+    old = ats.change_status(db, app, payload.status, user.id, note=payload.note)
+    audit(db, "application.status_changed", actor=user, entity_type="application", entity_id=app.id,
+          details={"from": old.value, "to": payload.status.value, "note": payload.note}, request=request)
     db.commit()
     db.refresh(app)
-    if payload.status and payload.status != old_status:
-        try:
-            from app.services.email import send_status_update_email
-            candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
-            if candidate:
-                candidate_user = db.query(User).filter(User.id == candidate.user_id).first()
-                job = db.query(Job).options(joinedload(Job.company)).filter(Job.id == app.job_id).first()
-                if candidate_user and job:
-                    company_name = job.company.name if job.company else ""
-                    send_status_update_email(
-                        candidate_user.email, candidate_user.name,
-                        job.title, str(payload.status.value), company_name
-                    )
-        except Exception as e:
-            logger.error(f"Email error on status update: {e}")
-    return ApplicationResponse.model_validate(app)
+    _notify_status(db, app, payload.status.value)
+    return _build_app_response(app)
+
+
+@router.post("/applications/{application_id}/withdraw", response_model=ApplicationResponse)
+def withdraw_application(
+    application_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(UserRole.candidate)),
+):
+    candidate = db.query(Candidate).filter(Candidate.user_id == user.id).first()
+    app = db.query(Application).filter(Application.id == application_id).first()
+    if not app or not candidate or app.candidate_id != candidate.id:
+        raise HTTPException(status_code=404, detail="Application not found")
+    old = ats.change_status(db, app, ApplicationStatus.withdrawn, user.id, by_candidate=True)
+    audit(db, "application.withdrawn", actor=user, entity_type="application", entity_id=app.id,
+          details={"from": old.value}, request=request)
+    db.commit()
+    try:
+        from app.services.email import send_message_notification_email
+        job = db.get(Job, app.job_id)
+        recruiter_user = (db.query(User).join(Recruiter, Recruiter.user_id == User.id)
+                          .filter(Recruiter.id == job.recruiter_id).first()) if job else None
+        if recruiter_user:
+            send_message_notification_email(recruiter_user.email, recruiter_user.name, user.name, job.title,
+                                            "message", f"{user.name} has withdrawn their application.")
+    except Exception:
+        logger.exception("withdraw email failed")
+    item = ApplicationResponse.model_validate(app)
+    item.resume_url = sign_resume_url(app.resume_url)
+    return item
+
+
+@router.get("/applications/{application_id}/history")
+def application_history(
+    application_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """ATS history of one application, for its candidate or the managing recruiters."""
+    app = (db.query(Application).options(joinedload(Application.job), joinedload(Application.candidate))
+           .filter(Application.id == application_id).first())
+    allowed = bool(app) and (
+        (user.role == UserRole.candidate and app.candidate and app.candidate.user_id == user.id)
+        or (user.role in EMPLOYER_ROLES and _can_manage(user, _recruiter_for(db, user), app.job))
+    )
+    if not allowed:
+        raise HTTPException(status_code=404, detail="Application not found")
+    events = (db.query(ApplicationEvent).filter(ApplicationEvent.application_id == application_id)
+              .order_by(ApplicationEvent.id).all())
+    return [{"from_status": e.from_status, "to_status": e.to_status, "note": e.note,
+             "actor_user_id": e.actor_user_id, "created_at": e.created_at} for e in events]
 
 
 @router.get("/{job_id}", response_model=JobResponse)
-def get_job(job_id: int, db: Session = Depends(get_db)):
+def get_job(job_id: int, db: Session = Depends(get_db), user: User | None = Depends(get_optional_user)):
     job = db.query(Job).options(joinedload(Job.company)).filter(Job.id == job_id).first()
     if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    # Drafts and closed jobs are only visible to the people who manage them
+    if job.status != JobStatus.published and not (user and user.role in EMPLOYER_ROLES
+                                                  and _can_manage(user, _recruiter_for(db, user), job)):
         raise HTTPException(status_code=404, detail="Job not found")
     return job_to_response(job)
 
@@ -296,14 +406,15 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
 @router.post("", response_model=JobResponse, status_code=201)
 def create_job(
     payload: JobCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)),
+    user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
-    recruiter = db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
+    recruiter = _recruiter_for(db, user)
     if not recruiter:
         raise HTTPException(status_code=404, detail="Recruiter profile not found")
     job = Job(
-        title=payload.title,
+        title=payload.title.strip(),
         description=payload.description,
         company_id=recruiter.company_id,
         recruiter_id=recruiter.id,
@@ -314,8 +425,12 @@ def create_job(
         location=payload.location,
         employment_type=payload.employment_type,
         status=payload.status,
+        created_at=datetime.now(timezone.utc),
     )
     db.add(job)
+    db.flush()
+    audit(db, "job.created", actor=user, entity_type="job", entity_id=job.id,
+          details={"title": job.title, "status": job.status.value}, request=request)
     db.commit()
     db.refresh(job)
     db.refresh(job, ["company"])
@@ -326,19 +441,23 @@ def create_job(
 def update_job(
     job_id: int,
     payload: JobUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)),
+    user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
-    recruiter = db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
-    if not recruiter:
-        raise HTTPException(status_code=404, detail="Recruiter profile not found")
-    job = db.query(Job).options(joinedload(Job.company)).filter(
-        Job.id == job_id, Job.recruiter_id == recruiter.id
-    ).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    job = _manageable_job(db, user, job_id, with_company=True)
+    changes = payload.model_dump(exclude_unset=True)
+    _min = changes.get("salary_min", job.salary_min)
+    _max = changes.get("salary_max", job.salary_max)
+    if _min is not None and _max is not None and _min > _max:
+        raise HTTPException(status_code=422, detail="Minimum salary cannot be greater than maximum salary")
+    before = {k: getattr(job, k) for k in changes}
+    for key, value in changes.items():
         setattr(job, key, value)
+    audit(db, "job.updated", actor=user, entity_type="job", entity_id=job.id,
+          details={"before": {k: (v.value if hasattr(v, "value") else v) for k, v in before.items()},
+                   "after": {k: (v.value if hasattr(v, "value") else v) for k, v in changes.items()}},
+          request=request)
     db.commit()
     db.refresh(job)
     return job_to_response(job)
@@ -347,19 +466,16 @@ def update_job(
 @router.delete("/{job_id}", status_code=204)
 def delete_job(
     job_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)),
+    user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
-    recruiter = db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
-    if not recruiter:
-        raise HTTPException(status_code=404, detail="Recruiter profile not found")
-    job = db.query(Job).filter(Job.id == job_id, Job.recruiter_id == recruiter.id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = _manageable_job(db, user, job_id)
     # Remove saved-job references (no ORM relationship for cascade), then delete the
     # job — applications and their messages cascade via the ORM relationship.
-    from app.models.saved_job import SavedJob
     db.query(SavedJob).filter(SavedJob.job_id == job_id).delete(synchronize_session=False)
+    audit(db, "job.deleted", actor=user, entity_type="job", entity_id=job.id,
+          details={"title": job.title}, request=request)
     try:
         db.delete(job)
         db.commit()
@@ -372,7 +488,8 @@ def delete_job(
 @router.post("/{job_id}/apply")
 def apply_job(
     job_id: int,
-    payload: ApplicationCreate = None,
+    request: Request,
+    payload: ApplicationCreate | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(UserRole.candidate)),
 ):
@@ -390,6 +507,7 @@ def apply_job(
     if existing:
         return {"message": "Already applied", "job_id": job_id, "application_id": existing.id, "already_applied": True}
 
+    resume_ref = own_resume_ref(payload.resume_url if payload else None, user.id) or candidate.resume_url
     app = Application(
         candidate_id=candidate.id,
         job_id=job_id,
@@ -398,26 +516,32 @@ def apply_job(
         phone=payload.phone if payload else None,
         years_experience=payload.years_experience if payload else None,
         cover_letter=payload.cover_letter if payload else None,
-        resume_url=(payload.resume_url if payload else None) or candidate.resume_url,
+        resume_url=resume_ref,
     )
     db.add(app)
-    db.commit()
-    db.refresh(app)
-
-    # Auto-compute ATS score immediately on apply
     try:
-        result = _compute_ats(job, app, candidate)
-        app.score = float(result["total"])
-        db.commit()
+        db.flush()
+    except IntegrityError:
+        # A second, simultaneous click: the unique index stopped the duplicate
+        db.rollback()
+        existing = db.query(Application).filter(
+            Application.candidate_id == candidate.id, Application.job_id == job_id).first()
+        return {"message": "Already applied", "job_id": job_id,
+                "application_id": existing.id if existing else None, "already_applied": True}
+
+    ats.record_applied(db, app, user.id)
+    try:
+        app.score = float(_compute_ats(job, app, candidate)["total"])
     except Exception:
-        pass
+        logger.exception("ATS scoring failed")
+    audit(db, "application.created", actor=user, entity_type="application", entity_id=app.id,
+          details={"job_id": job_id}, request=request)
+    db.commit()
 
     try:
         from app.services.email import send_application_received_email, send_recruiter_new_application_email
         company_name = job.company.name if job.company else "the company"
-        # Email candidate
         send_application_received_email(user.email, user.name, job.title, company_name)
-        # Email recruiter
         recruiter_user = db.query(User).join(Recruiter, Recruiter.user_id == User.id).filter(
             Recruiter.id == job.recruiter_id
         ).first()
@@ -438,17 +562,20 @@ def apply_job(
 @router.get("/{job_id}/applications", response_model=list[ApplicationResponse])
 def list_job_applications(
     job_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)),
+    user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
-    recruiter = db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
-    if not recruiter:
-        raise HTTPException(status_code=404, detail="Recruiter profile not found")
-    job = db.query(Job).filter(Job.id == job_id, Job.recruiter_id == recruiter.id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    applications = db.query(Application).filter(Application.job_id == job_id).all()
-    return [_build_app_response(app, db) for app in applications]
+    _manageable_job(db, user, job_id)
+    applications = (
+        db.query(Application)
+        .options(joinedload(Application.candidate).joinedload(Candidate.user))
+        .filter(Application.job_id == job_id)
+        .order_by(Application.id.desc())
+        .offset(skip).limit(limit).all()
+    )
+    return [_build_app_response(app) for app in applications]
 
 
 # ─────────────────────────────────────────────
@@ -460,22 +587,15 @@ def compute_ats_single(
     job_id: int,
     application_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)),
+    user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
     """Compute and save ATS score for one application."""
-    recruiter = db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
-    if not recruiter:
-        raise HTTPException(status_code=404, detail="Recruiter profile not found")
-    job = db.query(Job).filter(Job.id == job_id, Job.recruiter_id == recruiter.id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    app = db.query(Application).filter(
-        Application.id == application_id, Application.job_id == job_id
-    ).first()
+    job = _manageable_job(db, user, job_id)
+    app = (db.query(Application).options(joinedload(Application.candidate))
+           .filter(Application.id == application_id, Application.job_id == job_id).first())
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
-    candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
-    result = _compute_ats(job, app, candidate)
+    result = _compute_ats(job, app, app.candidate)
     app.score = float(result["total"])
     db.commit()
     return {"application_id": application_id, **result}
@@ -485,20 +605,15 @@ def compute_ats_single(
 def compute_ats_all(
     job_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)),
+    user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
     """Compute and save ATS scores for all applications on a job."""
-    recruiter = db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
-    if not recruiter:
-        raise HTTPException(status_code=404, detail="Recruiter profile not found")
-    job = db.query(Job).filter(Job.id == job_id, Job.recruiter_id == recruiter.id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    applications = db.query(Application).filter(Application.job_id == job_id).all()
+    job = _manageable_job(db, user, job_id)
+    applications = (db.query(Application).options(joinedload(Application.candidate))
+                    .filter(Application.job_id == job_id).all())
     results = []
     for app in applications:
-        candidate = db.query(Candidate).filter(Candidate.id == app.candidate_id).first()
-        r = _compute_ats(job, app, candidate)
+        r = _compute_ats(job, app, app.candidate)
         app.score = float(r["total"])
         results.append({"application_id": app.id, **r})
     db.commit()

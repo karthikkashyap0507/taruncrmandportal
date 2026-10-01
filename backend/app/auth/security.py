@@ -1,4 +1,5 @@
 import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -15,21 +16,37 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        return False
 
 
-def create_access_token(subject: str) -> str:
+def utc(dt: datetime | None) -> datetime | None:
+    """SQLite hands back naive datetimes; treat them as UTC so comparisons work."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def new_token_id() -> str:
+    return secrets.token_urlsafe(24)
+
+
+def hash_token_id(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def create_access_token(subject: str, session_id: int) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    return jwt.encode({"sub": subject, "exp": expire}, settings.SECRET_KEY, algorithm=ALGORITHM)
+    payload = {"sub": subject, "sid": session_id, "type": "access", "exp": expire}
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
-def create_refresh_token(subject: str) -> str:
+def create_refresh_token(subject: str, session_id: int, jti: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    return jwt.encode(
-        {"sub": subject, "exp": expire, "type": "refresh"},
-        settings.SECRET_KEY,
-        algorithm=ALGORITHM,
-    )
+    payload = {"sub": subject, "sid": session_id, "jti": jti, "type": "refresh", "exp": expire}
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> dict[str, Any]:

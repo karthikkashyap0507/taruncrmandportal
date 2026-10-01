@@ -1,6 +1,6 @@
 export type UserRole = "candidate" | "recruiter" | "company_admin" | "platform_admin";
 export type JobStatus = "draft" | "published" | "closed";
-export type ApplicationStatus = "applied" | "screening" | "interview" | "offered" | "rejected";
+export type ApplicationStatus = "applied" | "screening" | "interview" | "offered" | "hired" | "rejected" | "withdrawn";
 export type EmploymentType = "full_time" | "part_time" | "contract" | "internship" | "remote";
 
 export interface ExperienceItem {
@@ -41,6 +41,7 @@ export interface Company {
   website?: string;
   description?: string;
   industry?: string;
+  openPositions?: number;
 }
 
 export interface Job {

@@ -249,6 +249,7 @@ export default function JobsPage() {
 
       {/* City */}
       <FilterSection title="City / Location">
+        {/* compact 2-up controls: fine on phones */}
         <div className="grid grid-cols-2 gap-1.5">
           {CITIES.map(c => (
             <button key={c} onClick={() => setCity(c)}
@@ -263,7 +264,7 @@ export default function JobsPage() {
 
       {/* Job Category / Role */}
       <FilterSection title="Job Category">
-        <Select value={category} onValueChange={setCategory}>
+        <Select value={category} onValueChange={(v) => setCategory(v ?? "")}>
           <SelectTrigger className="border-white/10 bg-white/5 text-sm h-9">
             <SelectValue />
           </SelectTrigger>
@@ -313,6 +314,7 @@ export default function JobsPage() {
               </button>
             ))}
           </div>
+          {/* compact 2-up controls: fine on phones */}
           <div className="grid grid-cols-2 gap-2">
             <div>
               <p className="mb-1 text-[10px] text-[#64748B]">Min</p>
@@ -388,7 +390,7 @@ export default function JobsPage() {
             {/* City quick select */}
             <div className="relative w-44">
               <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94A3B8] z-10 pointer-events-none" />
-              <Select value={city} onValueChange={setCity}>
+              <Select value={city} onValueChange={(v) => setCity(v ?? "")}>
                 <SelectTrigger className="border-0 bg-white/5 pl-9 text-sm h-10">
                   <SelectValue />
                 </SelectTrigger>
@@ -400,7 +402,7 @@ export default function JobsPage() {
             {/* Category quick select */}
             <div className="relative w-52">
               <Briefcase className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94A3B8] z-10 pointer-events-none" />
-              <Select value={category} onValueChange={setCategory}>
+              <Select value={category} onValueChange={(v) => setCategory(v ?? "")}>
                 <SelectTrigger className="border-0 bg-white/5 pl-9 text-sm h-10">
                   <SelectValue />
                 </SelectTrigger>
@@ -461,7 +463,7 @@ export default function JobsPage() {
               {/* Sort */}
               <div className="flex items-center gap-2">
                 <ArrowUpDown className="h-4 w-4 text-[#64748B]" />
-                <Select value={sortBy} onValueChange={setSortBy}>
+                <Select value={sortBy} onValueChange={(v) => setSortBy(v ?? "")}>
                   <SelectTrigger className="h-8 border-white/10 bg-white/5 text-xs w-44">
                     <SelectValue />
                   </SelectTrigger>

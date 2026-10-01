@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.application import ApplicationStatus
 from app.models.job import JobStatus
@@ -44,16 +45,17 @@ class ApplicationResponse(BaseModel):
 
 
 class ApplicationCreate(BaseModel):
-    full_name: Optional[str] = None
-    phone: Optional[str] = None
-    years_experience: Optional[int] = None
-    cover_letter: Optional[str] = None
-    resume_url: Optional[str] = None
+    full_name: Optional[str] = Field(default=None, max_length=255)
+    phone: Optional[str] = Field(default=None, max_length=50)
+    years_experience: Optional[int] = Field(default=None, ge=0, le=60)
+    cover_letter: Optional[str] = Field(default=None, max_length=10000)
+    resume_url: Optional[str] = Field(default=None, max_length=500)
 
 
 class ApplicationUpdate(BaseModel):
+    # The ATS score is always computed by the server; recruiters cannot set it.
     status: Optional[ApplicationStatus] = None
-    score: Optional[float] = None
+    note: Optional[str] = Field(default=None, max_length=2000)
 
 
 class MessageResponse(BaseModel):
@@ -68,33 +70,70 @@ class MessageResponse(BaseModel):
 
 
 class MessageCreate(BaseModel):
-    content: str
+    content: str = Field(..., min_length=1, max_length=5000)
     message_type: MessageType = MessageType.message
 
 
+def _clean_skills(v):
+    if v is None:
+        return v
+    out, seen = [], set()
+    for s in v:
+        s = str(s).strip()[:60]
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            out.append(s)
+    return out[:50]
+
+
+def _check_salary(salary_min, salary_max):
+    if salary_min is not None and salary_max is not None and salary_min > salary_max:
+        raise ValueError("Minimum salary cannot be greater than maximum salary")
+
+
 class JobCreate(BaseModel):
-    title: str
-    description: str
+    title: str = Field(..., min_length=3, max_length=255)
+    description: str = Field(..., min_length=10, max_length=20000)
     company_id: Optional[int] = None
-    salary_min: Optional[int] = None
-    salary_max: Optional[int] = None
+    salary_min: Optional[int] = Field(default=None, ge=0, le=1_000_000_000)
+    salary_max: Optional[int] = Field(default=None, ge=0, le=1_000_000_000)
     skills: list[str] = []
-    experience_level: Optional[str] = None
-    location: Optional[str] = None
-    employment_type: Optional[str] = None
+    experience_level: Optional[str] = Field(default=None, max_length=100)
+    location: Optional[str] = Field(default=None, max_length=255)
+    employment_type: Optional[str] = Field(default=None, max_length=50)
     status: JobStatus = JobStatus.published
+
+    @field_validator("skills")
+    @classmethod
+    def clean_skills(cls, v):
+        return _clean_skills(v)
+
+    @model_validator(mode="after")
+    def salary_range(self):
+        _check_salary(self.salary_min, self.salary_max)
+        return self
 
 
 class JobUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    salary_min: Optional[int] = None
-    salary_max: Optional[int] = None
+    title: Optional[str] = Field(default=None, min_length=3, max_length=255)
+    description: Optional[str] = Field(default=None, min_length=10, max_length=20000)
+    salary_min: Optional[int] = Field(default=None, ge=0, le=1_000_000_000)
+    salary_max: Optional[int] = Field(default=None, ge=0, le=1_000_000_000)
     skills: Optional[list[str]] = None
-    experience_level: Optional[str] = None
-    location: Optional[str] = None
-    employment_type: Optional[str] = None
+    experience_level: Optional[str] = Field(default=None, max_length=100)
+    location: Optional[str] = Field(default=None, max_length=255)
+    employment_type: Optional[str] = Field(default=None, max_length=50)
     status: Optional[JobStatus] = None
+
+    @field_validator("skills")
+    @classmethod
+    def clean_skills(cls, v):
+        return _clean_skills(v)
+
+    @model_validator(mode="after")
+    def salary_range(self):
+        _check_salary(self.salary_min, self.salary_max)
+        return self
 
 
 class JobResponse(BaseModel):

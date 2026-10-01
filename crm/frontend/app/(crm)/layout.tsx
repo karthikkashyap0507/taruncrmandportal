@@ -7,10 +7,12 @@ import toast from "react-hot-toast";
 import {
   LayoutDashboard, Users, Building2, UserCheck, Briefcase,
   KanbanSquare, Calendar, BarChart3, ClipboardList, Settings,
-  Bell, LogOut, Menu, X, ChevronDown,
+  Bell, LogOut, Menu, X, ChevronDown, FileText, Award, Receipt, Wallet, ShieldCheck,
 } from "lucide-react";
 
-const navItems = [
+type Role = "owner" | "bdm" | "hr";
+
+const navItems: { href: string; label: string; icon: any; roles?: Role[] }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/leads", label: "Leads", icon: KanbanSquare },
   { href: "/pipeline", label: "Pipeline", icon: KanbanSquare },
@@ -18,9 +20,14 @@ const navItems = [
   { href: "/candidates", label: "Candidates", icon: UserCheck },
   { href: "/jobs", label: "Jobs", icon: Briefcase },
   { href: "/interviews", label: "Interviews", icon: Calendar },
+  { href: "/placements", label: "Placements", icon: Award },
+  { href: "/agreements", label: "MOUs", icon: FileText, roles: ["owner", "bdm"] },
+  { href: "/invoices", label: "Invoices", icon: Receipt, roles: ["owner", "bdm"] },
+  { href: "/incentives", label: "Incentives", icon: Wallet },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/tasks", label: "Tasks", icon: ClipboardList },
-  { href: "/team", label: "Team", icon: Users, ownerOnly: true },
+  { href: "/team", label: "Team", icon: Users, roles: ["owner"] },
+  { href: "/audit", label: "Audit Log", icon: ShieldCheck, roles: ["owner"] },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -83,7 +90,7 @@ export default function CRMLayout({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
 
-  const visibleNav = navItems.filter(item => !item.ownerOnly || user.role === "owner");
+  const visibleNav = navItems.filter(item => !item.roles || item.roles.includes(user.role));
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">

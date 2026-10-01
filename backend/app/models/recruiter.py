@@ -9,7 +9,7 @@ class Recruiter(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
 
     user = relationship("User", back_populates="recruiter")
     company = relationship("Company", back_populates="recruiters")

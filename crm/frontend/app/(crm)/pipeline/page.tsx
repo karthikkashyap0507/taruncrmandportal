@@ -1,6 +1,6 @@
 "use client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { leadsApi } from "@/lib/api";
+import { leadsApi, apiError } from "@/lib/api";
 import toast from "react-hot-toast";
 import { Building2, Phone, Mail, Plus, TrendingUp } from "lucide-react";
 import { useState } from "react";
@@ -79,7 +79,7 @@ export default function PipelinePage() {
   const updateStatus = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) => leadsApi.updateStatus(id, status),
     onSuccess: () => { toast.success("Lead moved"); qc.invalidateQueries({ queryKey: ["pipeline"] }); },
-    onError: () => toast.error("Failed to move lead"),
+    onError: (e: any) => toast.error(apiError(e, "Failed to move lead")),
   });
 
   function handleDrop(e: React.DragEvent, toStatus: string) {

@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Badge } from "@/components/ui/badge";
 import { dashboardPathForRole } from "@/lib/dashboard-path";
 import { useAuthStore } from "@/store/auth-store";
-import { jobsApi, messagesApi } from "@/services/api";
+import { jobsApi, messagesApi, apiError, fileUrl } from "@/services/api";
 import type { Application, ApplicationStatus, AppMessage, ATSResult, Job, JobCreate, JobUpdate, MessageType } from "@/types";
 
 // ─── Status config ────────────────────────────────────────────────────────────
@@ -27,6 +27,8 @@ const STATUS_CONFIG: Record<ApplicationStatus, { label: string; color: string; b
   screening: { label: "Screening", color: "text-yellow-400", bg: "bg-yellow-500/20 border-yellow-500/30" },
   interview: { label: "Interview", color: "text-purple-400", bg: "bg-purple-500/20 border-purple-500/30" },
   offered:   { label: "Offered",   color: "text-green-400",  bg: "bg-green-500/20 border-green-500/30" },
+  hired:     { label: "Hired",     color: "text-emerald-300", bg: "bg-emerald-500/20 border-emerald-500/30" },
+  withdrawn: { label: "Withdrawn", color: "text-slate-400",   bg: "bg-slate-500/10 border-slate-500/30" },
   rejected:  { label: "Rejected",  color: "text-red-400",    bg: "bg-red-500/20 border-red-500/30" },
 };
 
@@ -147,11 +149,18 @@ export default function RecruiterDashboardPage() {
       setMessages(prev => [...prev, res.data]);
       setNewMessage("");
       if (selectedApp.job_id) await loadApplications(selectedApp.job_id);
+    } catch (e) {
+      alert(apiError(e, "Could not send the message"));
     } finally { setSendingMsg(false); }
   };
 
   const handleStatusChange = async (appId: number, status: ApplicationStatus) => {
-    await jobsApi.updateApplication(appId, { status });
+    try {
+      await jobsApi.updateApplication(appId, { status });
+    } catch (e) {
+      alert(apiError(e, "Could not update the status"));  // e.g. the ATS rules block this move
+      return;
+    }
     Object.keys(applications).forEach(jid => loadApplications(parseInt(jid)));
     if (selectedApp?.id === appId) setSelectedApp(a => a ? { ...a, status } : a);
   };
@@ -162,7 +171,9 @@ export default function RecruiterDashboardPage() {
       setIsCreateOpen(false);
       setCreateForm({ title: "", description: "", skills: [], status: "published" });
       loadJobs();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      alert(apiError(e, "Could not create the job"));
+    }
   };
 
   const handleEditJob = async () => {
@@ -171,12 +182,19 @@ export default function RecruiterDashboardPage() {
       await jobsApi.update(editingJob.id, editForm);
       setIsEditOpen(false);
       loadJobs();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      alert(apiError(e, "Could not save the job"));
+    }
   };
 
   const handleDeleteJob = async (jobId: number) => {
     if (!confirm("Delete this job?")) return;
-    await jobsApi.delete(jobId);
+    try {
+      await jobsApi.delete(jobId);
+    } catch (e) {
+      alert(apiError(e, "Could not delete the job"));
+      return;
+    }
     loadJobs();
   };
 
@@ -489,7 +507,7 @@ export default function RecruiterDashboardPage() {
 
                       {(selectedApp.resume_url || selectedApp.candidate_info?.resume_url) && (
                         <div className="mb-4">
-                          <a href={selectedApp.resume_url || selectedApp.candidate_info?.resume_url}
+                          <a href={fileUrl(selectedApp.resume_url || selectedApp.candidate_info?.resume_url)}
                             target="_blank" rel="noopener noreferrer" download
                             className="inline-flex items-center gap-2 rounded-lg bg-[#3B82F6]/10 border border-[#3B82F6]/30 px-4 py-2 text-sm text-[#3B82F6] hover:bg-[#3B82F6]/20 transition-colors">
                             <Download className="h-4 w-4" /> Download Resume
@@ -504,6 +522,7 @@ export default function RecruiterDashboardPage() {
                             { status: "screening" as ApplicationStatus, label: "Move to Screening", icon: <Eye className="h-3 w-3" />, cls: "text-yellow-400 border-yellow-500/30 bg-yellow-500/10 hover:bg-yellow-500/20" },
                             { status: "interview" as ApplicationStatus, label: "Invite to Interview", icon: <MessageSquare className="h-3 w-3" />, cls: "text-purple-400 border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20" },
                             { status: "offered" as ApplicationStatus, label: "Send Offer", icon: <CheckCircle className="h-3 w-3" />, cls: "text-green-400 border-green-500/30 bg-green-500/10 hover:bg-green-500/20" },
+                            { status: "hired" as ApplicationStatus, label: "Mark Hired", icon: <CheckCircle className="h-3 w-3" />, cls: "text-emerald-300 border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20" },
                             { status: "rejected" as ApplicationStatus, label: "Reject", icon: <XCircle className="h-3 w-3" />, cls: "text-red-400 border-red-500/30 bg-red-500/10 hover:bg-red-500/20" },
                           ].map(({ status, label, icon, cls }) => (
                             <button key={status} onClick={() => handleStatusChange(selectedApp.id, status)}
@@ -1141,7 +1160,7 @@ function JobFormDialog({ title, form, setForm, onSubmit, onCancel }: any) {
             <p className="text-[10px] text-[#475569]">AI-generated — review and edit as needed before saving.</p>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="grid gap-2">
             <Label className="text-white text-sm">Salary Min (₹)</Label>
             <Input type="number" value={form.salary_min || ""} onChange={e => setForm((p: any) => ({ ...p, salary_min: parseInt(e.target.value) || undefined }))}
@@ -1153,7 +1172,7 @@ function JobFormDialog({ title, form, setForm, onSubmit, onCancel }: any) {
               className="bg-white/5 border-white/10 text-white" />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="grid gap-2">
             <Label className="text-white text-sm">Employment Type</Label>
             <Select value={form.employment_type || ""} onValueChange={v => setForm((p: any) => ({ ...p, employment_type: v }))}>

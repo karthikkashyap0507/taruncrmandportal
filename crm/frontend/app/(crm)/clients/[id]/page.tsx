@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { clientsApi } from "@/lib/api";
+import { clientsApi, apiError } from "@/lib/api";
+import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
 import {
@@ -39,6 +40,9 @@ export default function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
+  const role = useAuthStore(s => s.user?.role);
+  const canEdit = role === "owner" || role === "bdm";
+  const isOwner = role === "owner";
 
   const [editOpen, setEditOpen] = useState(false);
   const [showContactForm, setShowContactForm] = useState(false);
@@ -54,7 +58,7 @@ export default function ClientDetailPage() {
   const deleteMutation = useMutation({
     mutationFn: () => clientsApi.delete(Number(id)),
     onSuccess: () => { toast.success("Client deleted"); router.push("/clients"); },
-    onError: () => toast.error("Failed to delete"),
+    onError: (e: any) => toast.error(apiError(e, "Failed to delete")),
   });
 
   async function submitContact() {
@@ -66,7 +70,7 @@ export default function ClientDetailPage() {
       setShowContactForm(false);
       qc.invalidateQueries({ queryKey: ["client", id] });
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || "Failed to add contact");
+      toast.error(apiError(e, "Failed to add contact"));
     }
   }
 
@@ -76,8 +80,8 @@ export default function ClientDetailPage() {
       await clientsApi.deleteContact(contactId);
       toast.success("Contact removed");
       qc.invalidateQueries({ queryKey: ["client", id] });
-    } catch {
-      toast.error("Failed to remove contact");
+    } catch (e: any) {
+      toast.error(apiError(e, "Failed to remove contact"));
     }
   }
 
@@ -119,15 +123,19 @@ export default function ClientDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => setEditOpen(true)} className="btn-secondary flex items-center gap-1.5 text-sm">
-            <Edit2 size={14} /> Edit
-          </button>
+          {canEdit && (
+            <button onClick={() => setEditOpen(true)} className="btn-secondary flex items-center gap-1.5 text-sm">
+              <Edit2 size={14} /> Edit
+            </button>
+          )}
+          {isOwner && (
           <button
             onClick={() => { if (confirm("Delete this client permanently?")) deleteMutation.mutate(); }}
             className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
           >
             <Trash2 size={16} />
           </button>
+          )}
         </div>
       </div>
 
@@ -151,15 +159,15 @@ export default function ClientDetailPage() {
           {/* Contacts */}
           <Section
             title={`Contacts (${Array.isArray(contacts) ? contacts.length : 0})`}
-            action={
+            action={canEdit ? (
               <button onClick={() => setShowContactForm(v => !v)} className="btn-secondary flex items-center gap-1.5 text-xs">
                 <Plus size={13} /> Add Contact
               </button>
-            }
+            ) : undefined}
           >
             {showContactForm && (
               <div className="bg-gray-50 rounded-lg p-4 space-y-3 mb-4">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <input className="input text-sm" placeholder="Name *" value={contactForm.name} onChange={e => setContactForm(f => ({ ...f, name: e.target.value }))} />
                   <input className="input text-sm" placeholder="Designation" value={contactForm.designation} onChange={e => setContactForm(f => ({ ...f, designation: e.target.value }))} />
                   <input className="input text-sm" placeholder="Email" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} />
@@ -188,9 +196,11 @@ export default function ClientDetailPage() {
                         {ct.phone && <span className="text-xs text-gray-500 flex items-center gap-1"><Phone size={11} /> {ct.phone}</span>}
                       </div>
                     </div>
-                    <button onClick={() => deleteContact(ct.id)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded flex-shrink-0">
-                      <Trash2 size={14} />
-                    </button>
+                    {canEdit && (
+                      <button onClick={() => deleteContact(ct.id)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded flex-shrink-0">
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </div>
                 ))
               )}
@@ -241,7 +251,7 @@ function EditClientModal({ client, onClose, onSaved }: { client: any; onClose: (
       onSaved();
       onClose();
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || "Failed to save");
+      toast.error(apiError(e, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -254,7 +264,7 @@ function EditClientModal({ client, onClose, onSaved }: { client: any; onClose: (
           <h2 className="text-lg font-semibold">Edit Client</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
-        <div className="p-6 grid grid-cols-2 gap-4">
+        <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
             { label: "Company Name *", key: "name" },
             { label: "Website", key: "website" },
@@ -278,7 +288,7 @@ function EditClientModal({ client, onClose, onSaved }: { client: any; onClose: (
               {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
             </select>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
             <textarea
               className="input h-20 resize-none"

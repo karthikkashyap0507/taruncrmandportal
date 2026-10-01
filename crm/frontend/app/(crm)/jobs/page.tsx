@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
+import { useAuthStore } from "@/store/auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { jobsApi } from "@/lib/api";
+import { jobsApi, apiError } from "@/lib/api";
 import toast from "react-hot-toast";
 import { Plus, Search, Briefcase, MapPin, Users, Trash2, Eye, Edit2 } from "lucide-react";
 import { format } from "date-fns";
@@ -39,7 +40,7 @@ function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; on
       else await jobsApi.create(payload);
       toast.success(job?.id ? "Job updated" : "Job created");
       onSaved(); onClose();
-    } catch (e: any) { toast.error(e.response?.data?.detail || "Failed"); }
+    } catch (e: any) { toast.error(apiError(e, "Failed")); }
     finally { setSaving(false); }
   }
 
@@ -50,8 +51,8 @@ function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; on
           <h2 className="text-lg font-semibold">{job?.id ? "Edit Job" : "Post New Job"}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
-        <div className="p-5 grid grid-cols-2 gap-4">
-          <div className="col-span-2">
+        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Job Title *</label>
             <input className="input" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
           </div>
@@ -84,11 +85,11 @@ function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; on
               {JOB_STATUSES.map(s => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
             </select>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Required Skills (comma separated)</label>
             <input className="input" value={form.skills_required} onChange={e => setForm({ ...form, skills_required: e.target.value })} placeholder="React, Node.js, SQL..." />
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Job Description</label>
             <textarea className="input h-28 resize-none" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
           </div>
@@ -103,6 +104,9 @@ function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; on
 }
 
 export default function JobsPage() {
+  const role = useAuthStore(s => s.user?.role);
+  const canEdit = role === "owner" || role === "bdm";
+  const isOwner = role === "owner";
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -127,9 +131,11 @@ export default function JobsPage() {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div><h1 className="text-xl font-bold text-gray-900">Jobs</h1><p className="text-sm text-gray-500">{total} jobs</p></div>
-        <button onClick={() => { setEditJob(null); setShowForm(true); }} className="btn-primary flex items-center gap-2">
-          <Plus size={15} /> Post Job
-        </button>
+        {canEdit && (
+          <button onClick={() => { setEditJob(null); setShowForm(true); }} className="btn-primary flex items-center gap-2">
+            <Plus size={15} /> Post Job
+          </button>
+        )}
       </div>
 
       <div className="flex gap-3">
@@ -173,8 +179,8 @@ export default function JobsPage() {
             </div>
             <div className="flex items-center gap-1 pt-2 border-t border-gray-50">
               <a href={`/jobs/${j.id}`} className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-brand-600"><Eye size={14} /></a>
-              <button onClick={() => { setEditJob(j); setShowForm(true); }} className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-brand-600"><Edit2 size={14} /></button>
-              <button onClick={() => { if (confirm("Delete job?")) deleteMutation.mutate(j.id); }} className="p-1.5 hover:bg-red-50 rounded text-gray-500 hover:text-red-500"><Trash2 size={14} /></button>
+              {canEdit && <button onClick={() => { setEditJob(j); setShowForm(true); }} className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-brand-600"><Edit2 size={14} /></button>}
+              {isOwner && <button onClick={() => { if (confirm("Delete job?")) deleteMutation.mutate(j.id); }} className="p-1.5 hover:bg-red-50 rounded text-gray-500 hover:text-red-500"><Trash2 size={14} /></button>}
               <span className="ml-auto text-xs text-gray-400">{format(new Date(j.created_at), "MMM d")}</span>
             </div>
           </div>

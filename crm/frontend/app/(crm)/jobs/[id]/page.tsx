@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { jobsApi, candidatesApi } from "@/lib/api";
+import { jobsApi, candidatesApi, apiError } from "@/lib/api";
+import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
 import {
@@ -47,6 +48,9 @@ export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
+  const role = useAuthStore(s => s.user?.role);
+  const canEdit = role === "owner" || role === "bdm";
+  const isOwner = role === "owner";
 
   const [editOpen, setEditOpen] = useState(false);
 
@@ -68,13 +72,13 @@ export default function JobDetailPage() {
   const statusMutation = useMutation({
     mutationFn: (status: string) => jobsApi.update(Number(id), { status }),
     onSuccess: () => { toast.success("Status updated"); qc.invalidateQueries({ queryKey: ["job", id] }); },
-    onError: () => toast.error("Failed to update status"),
+    onError: (e: any) => toast.error(apiError(e, "Failed to update status")),
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => jobsApi.delete(Number(id)),
     onSuccess: () => { toast.success("Job deleted"); router.push("/jobs"); },
-    onError: () => toast.error("Failed to delete"),
+    onError: (e: any) => toast.error(apiError(e, "Failed to delete")),
   });
 
   async function moveStage(appId: number, stage: string) {
@@ -82,8 +86,8 @@ export default function JobDetailPage() {
       await jobsApi.updateStage(Number(id), appId, stage);
       toast.success("Stage updated");
       qc.invalidateQueries({ queryKey: ["job", id] });
-    } catch {
-      toast.error("Failed to update stage");
+    } catch (e: any) {
+      toast.error(apiError(e, "Failed to update stage"));
     }
   }
 
@@ -134,15 +138,19 @@ export default function JobDetailPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className={`badge ${STATUS_COLORS[job.status] || "badge-gray"}`}>{job.status.replace("_", " ")}</span>
           {job.source === "portal" && <span className="badge badge-blue text-xs">From Portal</span>}
-          <button onClick={() => setEditOpen(true)} className="btn-secondary flex items-center gap-1.5 text-sm">
-            <Edit2 size={14} /> Edit
-          </button>
-          <button
-            onClick={() => { if (confirm("Delete this job permanently?")) deleteMutation.mutate(); }}
-            className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-          >
-            <Trash2 size={16} />
-          </button>
+          {canEdit && (
+            <button onClick={() => setEditOpen(true)} className="btn-secondary flex items-center gap-1.5 text-sm">
+              <Edit2 size={14} /> Edit
+            </button>
+          )}
+          {isOwner && (
+            <button
+              onClick={() => { if (confirm("Delete this job permanently?")) deleteMutation.mutate(); }}
+              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -225,6 +233,7 @@ export default function JobDetailPage() {
             <InfoRow label="Created" value={format(new Date(job.created_at), "MMM d, yyyy")} icon={Clock} />
           </Section>
 
+          {canEdit && (
           <Section title="Update Status">
             <div className="space-y-1.5">
               {JOB_STATUSES.map(s => (
@@ -243,6 +252,7 @@ export default function JobDetailPage() {
               ))}
             </div>
           </Section>
+          )}
         </div>
       </div>
 
@@ -294,7 +304,7 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
       onSaved();
       onClose();
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || "Failed to save");
+      toast.error(apiError(e, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -307,7 +317,7 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
           <h2 className="text-lg font-semibold">Edit Job</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
-        <div className="p-6 grid grid-cols-2 gap-4">
+        <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
             { label: "Title *", key: "title" },
             { label: "Client Name", key: "client_name" },
@@ -340,7 +350,7 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
               {JOB_STATUSES.map(s => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
             </select>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Skills Required (comma separated)</label>
             <input
               type="text"
@@ -350,7 +360,7 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
               onChange={e => setForm({ ...form, skills_required: e.target.value })}
             />
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
             <textarea
               className="input h-24 resize-none"

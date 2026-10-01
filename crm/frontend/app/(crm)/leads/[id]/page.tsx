@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { leadsApi } from "@/lib/api";
+import { leadsApi, apiError } from "@/lib/api";
+import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
 import {
@@ -45,6 +46,8 @@ export default function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
+  const role = useAuthStore(s => s.user?.role);
+  const canDelete = role === "owner" || role === "bdm";
 
   const [editOpen, setEditOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
@@ -72,13 +75,13 @@ export default function LeadDetailPage() {
   const statusMutation = useMutation({
     mutationFn: (status: string) => leadsApi.updateStatus(Number(id), status),
     onSuccess: () => { toast.success("Status updated"); qc.invalidateQueries({ queryKey: ["lead", id] }); },
-    onError: () => toast.error("Failed to update status"),
+    onError: (e: any) => toast.error(apiError(e, "Failed to update status")),
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => leadsApi.delete(Number(id)),
     onSuccess: () => { toast.success("Lead deleted"); router.push("/leads"); },
-    onError: () => toast.error("Failed to delete"),
+    onError: (e: any) => toast.error(apiError(e, "Failed to delete")),
   });
 
   async function submitNote() {
@@ -170,12 +173,14 @@ export default function LeadDetailPage() {
           <button onClick={() => setEditOpen(true)} className="btn-secondary flex items-center gap-1.5 text-sm">
             <Edit2 size={14} /> Edit
           </button>
-          <button
-            onClick={() => { if (confirm("Delete this lead permanently?")) deleteMutation.mutate(); }}
-            className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-          >
-            <Trash2 size={16} />
-          </button>
+          {canDelete && (
+            <button
+              onClick={() => { if (confirm("Delete this lead permanently?")) deleteMutation.mutate(); }}
+              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -270,7 +275,7 @@ export default function LeadDetailPage() {
 
             {showFollowupForm ? (
               <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">Date & Time</label>
                     <input
@@ -407,7 +412,7 @@ function EditLeadModal({ lead, onClose, onSaved }: { lead: any; onClose: () => v
       onSaved();
       onClose();
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || "Failed to save");
+      toast.error(apiError(e, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -420,7 +425,7 @@ function EditLeadModal({ lead, onClose, onSaved }: { lead: any; onClose: () => v
           <h2 className="text-lg font-semibold">Edit Lead</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
-        <div className="p-6 grid grid-cols-2 gap-4">
+        <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
             { label: "Company Name *", key: "company_name" },
             { label: "Contact Name *", key: "contact_name" },
@@ -455,7 +460,7 @@ function EditLeadModal({ lead, onClose, onSaved }: { lead: any; onClose: () => v
               </select>
             </div>
           ))}
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Requirement</label>
             <textarea
               className="input h-20 resize-none"

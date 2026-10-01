@@ -1,7 +1,8 @@
 "use client";
 import { useState, Suspense } from "react";
+import { useAuthStore } from "@/store/auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { candidatesApi } from "@/lib/api";
+import { candidatesApi, apiError } from "@/lib/api";
 import toast from "react-hot-toast";
 import { Plus, Search, Trash2, Edit2, Eye, Upload, Star } from "lucide-react";
 import { format } from "date-fns";
@@ -47,7 +48,7 @@ function CandidateForm({ candidate, onClose, onSaved }: { candidate?: any; onClo
       onSaved();
       onClose();
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || "Failed to save");
+      toast.error(apiError(e, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -60,7 +61,7 @@ function CandidateForm({ candidate, onClose, onSaved }: { candidate?: any; onClo
           <h2 className="text-lg font-semibold">{candidate?.id ? "Edit Candidate" : "Add Candidate"}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
-        <div className="p-6 grid grid-cols-2 gap-4">
+        <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
             { label: "Full Name *", key: "name", required: true },
             { label: "Email", key: "email", type: "email" },
@@ -89,11 +90,11 @@ function CandidateForm({ candidate, onClose, onSaved }: { candidate?: any; onClo
               </select>
             </div>
           ))}
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Skills (comma separated)</label>
             <input className="input" value={form.skills} onChange={e => setForm({ ...form, skills: e.target.value })} placeholder="React, Node.js, Python..." />
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
             <textarea className="input h-20 resize-none" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
           </div>
@@ -110,6 +111,9 @@ function CandidateForm({ candidate, onClose, onSaved }: { candidate?: any; onClo
 }
 
 function CandidatesContent() {
+  const role = useAuthStore(s => s.user?.role);
+  const canEdit = role === "owner" || role === "bdm";
+  const isOwner = role === "owner";
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -224,9 +228,9 @@ function CandidatesContent() {
                       <button onClick={() => { setEditCandidate(c); setShowForm(true); }} className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-brand-600">
                         <Edit2 size={14} />
                       </button>
-                      <button onClick={() => { if (confirm("Remove candidate?")) deleteMutation.mutate(c.id); }} className="p-1.5 hover:bg-red-50 rounded text-gray-500 hover:text-red-500">
+                      {isOwner && (<button onClick={() => { if (confirm("Remove candidate?")) deleteMutation.mutate(c.id); }} className="p-1.5 hover:bg-red-50 rounded text-gray-500 hover:text-red-500">
                         <Trash2 size={14} />
-                      </button>
+                      </button>)}
                     </div>
                   </td>
                 </tr>

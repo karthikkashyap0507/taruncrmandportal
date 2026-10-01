@@ -13,6 +13,7 @@ __pycache__/
 *.sqlite
 *.sqlite3
 uploads/
+private_uploads/
 
 # Logs, backups & local tool settings
 *.log

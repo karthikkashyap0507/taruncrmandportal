@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { notificationsApi } from "@/lib/api";
+import { notificationsApi, apiError } from "@/lib/api";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
 import { Bell, Check, CheckCheck } from "lucide-react";
@@ -32,7 +32,7 @@ export default function NotificationsPage() {
       qc.invalidateQueries({ queryKey: ["notifications"] });
       qc.invalidateQueries({ queryKey: ["notif-count"] });
     },
-    onError: () => toast.error("Failed"),
+    onError: (e: any) => toast.error(apiError(e, "Failed")),
   });
 
   async function markRead(id: number, actionUrl?: string) {

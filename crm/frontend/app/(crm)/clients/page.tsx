@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
+import { useAuthStore } from "@/store/auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { clientsApi } from "@/lib/api";
+import { clientsApi, apiError } from "@/lib/api";
 import toast from "react-hot-toast";
 import { Plus, Search, Building2, Globe, MapPin, Trash2, Eye, Edit2 } from "lucide-react";
 
@@ -23,7 +24,7 @@ function ClientForm({ client, onClose, onSaved }: { client?: any; onClose: () =>
       else await clientsApi.create(form);
       toast.success(client?.id ? "Client updated" : "Client created");
       onSaved(); onClose();
-    } catch (e: any) { toast.error(e.response?.data?.detail || "Failed"); }
+    } catch (e: any) { toast.error(apiError(e, "Failed")); }
     finally { setSaving(false); }
   }
 
@@ -34,7 +35,7 @@ function ClientForm({ client, onClose, onSaved }: { client?: any; onClose: () =>
           <h2 className="text-lg font-semibold">{client?.id ? "Edit Client" : "Add Client"}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
-        <div className="p-5 grid grid-cols-2 gap-4">
+        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
             { label: "Company Name *", key: "name" },
             { label: "Website", key: "website" },
@@ -53,7 +54,7 @@ function ClientForm({ client, onClose, onSaved }: { client?: any; onClose: () =>
               {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
             </select>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
             <textarea className="input h-16 resize-none" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
           </div>
@@ -68,6 +69,9 @@ function ClientForm({ client, onClose, onSaved }: { client?: any; onClose: () =>
 }
 
 export default function ClientsPage() {
+  const role = useAuthStore(s => s.user?.role);
+  const canEdit = role === "owner" || role === "bdm";
+  const isOwner = role === "owner";
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -91,9 +95,11 @@ export default function ClientsPage() {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div><h1 className="text-xl font-bold text-gray-900">Clients</h1><p className="text-sm text-gray-500">{total} clients</p></div>
-        <button onClick={() => { setEditClient(null); setShowForm(true); }} className="btn-primary flex items-center gap-2">
-          <Plus size={15} /> Add Client
-        </button>
+        {canEdit && (
+          <button onClick={() => { setEditClient(null); setShowForm(true); }} className="btn-primary flex items-center gap-2">
+            <Plus size={15} /> Add Client
+          </button>
+        )}
       </div>
 
       <div className="relative max-w-sm">
@@ -137,8 +143,8 @@ export default function ClientsPage() {
               {c.size && <p className="text-xs text-gray-400">Size: {c.size}</p>}
               <div className="flex items-center gap-1 mt-4 pt-3 border-t border-gray-50">
                 <a href={`/clients/${c.id}`} className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-brand-600"><Eye size={14} /></a>
-                <button onClick={() => { setEditClient(c); setShowForm(true); }} className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-brand-600"><Edit2 size={14} /></button>
-                <button onClick={() => { if (confirm("Delete client?")) deleteMutation.mutate(c.id); }} className="p-1.5 hover:bg-red-50 rounded text-gray-500 hover:text-red-500"><Trash2 size={14} /></button>
+                {canEdit && <button onClick={() => { setEditClient(c); setShowForm(true); }} className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-brand-600"><Edit2 size={14} /></button>}
+                {isOwner && <button onClick={() => { if (confirm("Delete client?")) deleteMutation.mutate(c.id); }} className="p-1.5 hover:bg-red-50 rounded text-gray-500 hover:text-red-500"><Trash2 size={14} /></button>}
               </div>
             </div>
           ))}

@@ -1,7 +1,8 @@
 "use client";
 import { useState, Suspense, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { leadsApi } from "@/lib/api";
+import { leadsApi, apiError } from "@/lib/api";
+import { useAuthStore } from "@/store/auth";
 import { useSearchParams, useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { Plus, Search, Filter, Trash2, Edit2, Eye, Phone, Mail, Building2, TrendingUp } from "lucide-react";
@@ -51,7 +52,7 @@ function LeadForm({ lead, onClose, onSaved }: { lead?: any; onClose: () => void;
       onSaved();
       onClose();
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || "Failed to save");
+      toast.error(apiError(e, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -64,7 +65,7 @@ function LeadForm({ lead, onClose, onSaved }: { lead?: any; onClose: () => void;
           <h2 className="text-lg font-semibold">{lead?.id ? "Edit Lead" : "New Lead"}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
         </div>
-        <div className="p-6 grid grid-cols-2 gap-4">
+        <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
             { label: "Company Name *", key: "company_name", required: true },
             { label: "Contact Name *", key: "contact_name", required: true },
@@ -103,7 +104,7 @@ function LeadForm({ lead, onClose, onSaved }: { lead?: any; onClose: () => void;
             </div>
           ))}
 
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Requirement / Notes</label>
             <textarea
               className="input h-20 resize-none"
@@ -126,6 +127,8 @@ function LeadForm({ lead, onClose, onSaved }: { lead?: any; onClose: () => void;
 
 function LeadsContent() {
   const qc = useQueryClient();
+  const role = useAuthStore(s => s.user?.role);
+  const canDelete = role === "owner" || role === "bdm";
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -151,7 +154,7 @@ function LeadsContent() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => leadsApi.delete(id),
     onSuccess: () => { toast.success("Lead deleted"); qc.invalidateQueries({ queryKey: ["leads"] }); },
-    onError: () => toast.error("Failed to delete"),
+    onError: (e: any) => toast.error(apiError(e, "Failed to delete")),
   });
 
   const leads = data?.data || [];
@@ -250,12 +253,14 @@ function LeadsContent() {
                       <button onClick={() => { setEditLead(lead); setShowForm(true); }} className="p-1.5 hover:bg-gray-100 rounded text-gray-500 hover:text-brand-600">
                         <Edit2 size={14} />
                       </button>
-                      <button
-                        onClick={() => { if (confirm("Delete this lead?")) deleteMutation.mutate(lead.id); }}
-                        className="p-1.5 hover:bg-red-50 rounded text-gray-500 hover:text-red-500"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {canDelete && (
+                        <button
+                          onClick={() => { if (confirm("Delete this lead?")) deleteMutation.mutate(lead.id); }}
+                          className="p-1.5 hover:bg-red-50 rounded text-gray-500 hover:text-red-500"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

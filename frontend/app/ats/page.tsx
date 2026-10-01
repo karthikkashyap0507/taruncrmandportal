@@ -10,7 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { jobsApi } from "@/services/api";
+import { jobsApi, apiError } from "@/services/api";
 import { useAuthStore } from "@/store/auth-store";
 import type { Application, ApplicationStatus } from "@/types";
 
@@ -19,6 +19,7 @@ const STAGES: { key: ApplicationStatus; label: string; color: string; bg: string
   { key: "screening", label: "Screening", color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/30", icon: "🔍" },
   { key: "interview", label: "Interview", color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/30", icon: "🎯" },
   { key: "offered",   label: "Offered",   color: "text-green-400",  bg: "bg-green-500/10 border-green-500/30",  icon: "🎉" },
+  { key: "hired",     label: "Hired",     color: "text-emerald-300", bg: "bg-emerald-500/10 border-emerald-500/30", icon: "🏆" },
   { key: "rejected",  label: "Rejected",  color: "text-red-400",    bg: "bg-red-500/10 border-red-500/30",    icon: "❌" },
 ];
 
@@ -26,8 +27,10 @@ const NEXT_STAGE: Record<ApplicationStatus, ApplicationStatus | null> = {
   applied: "screening",
   screening: "interview",
   interview: "offered",
-  offered: null,
+  offered: "hired",
   rejected: null,
+  hired: null,
+  withdrawn: null,
 };
 
 export default function ATSPage() {
@@ -65,7 +68,7 @@ export default function ATSPage() {
       );
       if (selectedApp?.id === appId) setSelectedApp((a) => a ? { ...a, status: newStatus } : a);
     } catch (e) {
-      console.error("Failed to update stage", e);
+      alert(apiError(e, "Could not move this application"));
     } finally {
       setMovingId(null);
     }

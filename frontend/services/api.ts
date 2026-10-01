@@ -1,5 +1,6 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import { API_BASE_URL } from "@/lib/constants";
+import type { AuthSuccess } from "@/lib/auth-storage";
 import {
   clearAuth,
   getAccessToken,
@@ -29,6 +30,16 @@ export const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+// Private files (resumes) come back from the API as short-lived signed paths
+export const fileUrl = (path?: string | null) =>
+  path ? (path.startsWith("http") ? path : `${API_BASE_URL.replace(/\/api\/v1\/?$/, "")}${path}`) : undefined;
+
+// Readable error text from an API failure
+export const apiError = (e: unknown, fallback = "Something went wrong") => {
+  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  return typeof d === "string" ? d : fallback;
+};
+
 let refreshPromise: Promise<void> | null = null;
 
 async function refreshAccessToken(): Promise<void> {
@@ -43,7 +54,7 @@ async function refreshAccessToken(): Promise<void> {
     token_type: string;
     user: { id: number; name: string; email: string; role: string };
   }>(`${API_BASE_URL}/auth/refresh`, { refresh_token: rt });
-  persistAuth(data);
+  persistAuth(data as AuthSuccess);
 }
 
 api.interceptors.request.use((config) => {
@@ -95,7 +106,7 @@ api.interceptors.response.use(
 
 // Jobs API
 export const jobsApi = {
-  list: (params?: { q?: string; location?: string; employment_type?: string; experience_level?: string; salary_min?: number; salary_max?: number; remote?: boolean }) =>
+  list: (params?: { q?: string; location?: string; employment_type?: string; experience_level?: string; salary_min?: number; salary_max?: number; remote?: boolean; skip?: number; limit?: number }) =>
     api.get<Job[]>("/jobs", { params }),
   get: (id: number) => api.get<Job>(`/jobs/${id}`),
   create: (data: JobCreate) => api.post<Job>("/jobs", data),
@@ -168,12 +179,34 @@ export const messagesApi = {
 // Admin API
 export const adminApi = {
   getStats: () => api.get("/admin/stats"),
-  listUsers: (params?: { skip?: number; limit?: number; role?: string }) =>
+  listUsers: (params?: { skip?: number; limit?: number; role?: string; include_inactive?: boolean }) =>
     api.get("/admin/users", { params }),
   deleteUser: (id: number) => api.delete(`/admin/users/${id}`),
-  listCompanies: () => api.get("/admin/companies"),
+  activateUser: (id: number) => api.post(`/admin/users/${id}/activate`),
+  unlockUser: (id: number) => api.post(`/admin/users/${id}/unlock`),
+  listCompanies: (params?: { skip?: number; limit?: number }) => api.get("/admin/companies", { params }),
   deleteCompany: (id: number) => api.delete(`/admin/companies/${id}`),
-  listJobs: () => api.get("/admin/jobs"),
+  listJobs: (params?: { skip?: number; limit?: number }) => api.get("/admin/jobs", { params }),
   updateJobStatus: (id: number, status: string) =>
     api.patch(`/admin/jobs/${id}/status`, null, { params: { status } }),
+  auditLogs: (params?: { action?: string; skip?: number; limit?: number }) => api.get("/admin/audit-logs", { params }),
+  emails: (params?: { status?: string; skip?: number; limit?: number }) => api.get("/admin/notifications", { params }),
+  retryEmail: (id: number) => api.post(`/admin/notifications/${id}/retry`),
+  retryFailedEmails: () => api.post("/admin/notifications/retry-failed"),
+  enquiries: (params?: { status?: string; skip?: number; limit?: number }) => api.get("/admin/enquiries", { params }),
+  markEnquiryHandled: (id: number) => api.post(`/admin/enquiries/${id}/handled`),
+  reopenEnquiry: (id: number) => api.post(`/admin/enquiries/${id}/reopen`),
+  subscribers: (params?: { status?: string; skip?: number; limit?: number }) => api.get("/admin/newsletter", { params }),
+  sendDigestNow: () => api.post("/admin/newsletter/send-digest"),
+};
+
+// Public website forms (no login needed)
+export const publicApi = {
+  contact: (data: { name: string; email: string; subject: string; message: string }) =>
+    api.post<{ id: number; message: string }>("/contact", data),
+  subscribe: (email: string) =>
+    api.post<{ status: "pending" | "subscribed"; message: string }>("/newsletter/subscribe", { email }),
+  confirmSubscription: (email: string, sig: string) =>
+    api.post<{ message: string }>("/newsletter/confirm", { email, sig }),
+  unsubscribe: (email: string, sig: string) => api.post<{ message: string }>("/newsletter/unsubscribe", { email, sig }),
 };

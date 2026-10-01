@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { usersApi } from "@/lib/api";
+import { usersApi, apiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 import { Plus, Trash2, Edit2, ShieldCheck, Shield, User } from "lucide-react";
@@ -40,7 +40,7 @@ function UserForm({ user, onClose, onSaved }: { user?: any; onClose: () => void;
       onSaved();
       onClose();
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || "Failed to save");
+      toast.error(apiError(e, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -106,7 +106,7 @@ export default function TeamPage() {
   const deactivateMutation = useMutation({
     mutationFn: (id: number) => usersApi.delete(id),
     onSuccess: () => { toast.success("User deactivated"); qc.invalidateQueries({ queryKey: ["team-users"] }); },
-    onError: (e: any) => toast.error(e.response?.data?.detail || "Failed"),
+    onError: (e: any) => toast.error(apiError(e, "Failed")),
   });
 
   if (!currentUser || currentUser.role !== "owner") {

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from sqlalchemy import (
     String, Integer, Float, Boolean, Text, DateTime, Enum,
-    ForeignKey, JSON, UniqueConstraint, Table, Column,
+    ForeignKey, JSON, UniqueConstraint, Table, Column, Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
@@ -94,6 +94,14 @@ class NotifType(str, enum.Enum):
     follow_up = "follow_up"
     status_changed = "status_changed"
     task_assigned = "task_assigned"
+    candidate_update = "candidate_update"
+    application_stage = "application_stage"
+    interview_updated = "interview_updated"
+    interview_reminder = "interview_reminder"
+    joining = "joining"
+    placement = "placement"
+    invoice = "invoice"
+    incentive = "incentive"
     system = "system"
 
 
@@ -108,6 +116,12 @@ class ActivityType(str, enum.Enum):
     note_added = "note_added"
     status_change = "status_change"
     file_upload = "file_upload"
+    assign = "assign"
+    approve = "approve"
+    payment = "payment"
+    merge = "merge"
+    security = "security"
+    export = "export"
 
 
 # ── Association tables ──────────────────────────────────────────────────────────
@@ -136,6 +150,8 @@ class User(Base):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     login_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     permissions: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -152,8 +168,9 @@ class UserSession(Base):
     __tablename__ = "crm_user_sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id", ondelete="CASCADE"), index=True)
     refresh_token: Mapped[str] = mapped_column(String(500), unique=True, index=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     device_info: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -200,7 +217,7 @@ class Contact(Base):
     __tablename__ = "crm_contacts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    company_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_companies.id", ondelete="CASCADE"))
+    company_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_companies.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(120))
     designation: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -236,9 +253,9 @@ class Lead(Base):
     converted: Mapped[bool] = mapped_column(Boolean, default=False)
     converted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
-    assigned_to_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
+    assigned_to_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True, index=True)
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     assigned_to: Mapped[Optional["User"]] = relationship("User", back_populates="assigned_leads", foreign_keys=[assigned_to_id])
@@ -251,7 +268,7 @@ class LeadNote(Base):
     __tablename__ = "crm_lead_notes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    lead_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_leads.id", ondelete="CASCADE"))
+    lead_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_leads.id", ondelete="CASCADE"), index=True)
     content: Mapped[str] = mapped_column(Text)
     created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -264,9 +281,10 @@ class FollowUp(Base):
     __tablename__ = "crm_followups"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    lead_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_leads.id", ondelete="CASCADE"))
+    lead_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_leads.id", ondelete="CASCADE"), index=True)
     type: Mapped[str] = mapped_column(String(50), default="call")
-    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    reminded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     completed: Mapped[bool] = mapped_column(Boolean, default=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -286,6 +304,8 @@ class Candidate(Base):
     name: Mapped[str] = mapped_column(String(120), index=True)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Digits only (last 10), used to detect duplicate candidates regardless of formatting
+    phone_normalized: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
     current_title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     current_company: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     experience_years: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -300,9 +320,9 @@ class Candidate(Base):
     source: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    portal_candidate_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    portal_candidate_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by_id])
@@ -314,7 +334,7 @@ class CandidateNote(Base):
     __tablename__ = "crm_candidate_notes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    candidate_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_candidates.id", ondelete="CASCADE"))
+    candidate_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_candidates.id", ondelete="CASCADE"), index=True)
     content: Mapped[str] = mapped_column(Text)
     type: Mapped[str] = mapped_column(String(50), default="general")
     created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id"))
@@ -331,7 +351,7 @@ class CRMJob(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(255), index=True)
-    company_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_companies.id"), nullable=True)
+    company_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_companies.id"), nullable=True, index=True)
     client_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     job_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="full-time")
@@ -345,7 +365,7 @@ class CRMJob(Base):
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.open, index=True)
     deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     source: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="crm")
-    portal_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    portal_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     assigned_to_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -359,11 +379,13 @@ class CRMJob(Base):
 
 class Application(Base):
     __tablename__ = "crm_applications"
+    __table_args__ = (Index("uq_crm_applications_job_candidate", "job_id", "candidate_id", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    job_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_jobs.id", ondelete="CASCADE"))
-    candidate_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_candidates.id", ondelete="CASCADE"))
-    stage: Mapped[str] = mapped_column(String(50), default="applied")
+    job_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_jobs.id", ondelete="CASCADE"), index=True)
+    candidate_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_candidates.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(50), default="applied", index=True)
+    stage_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, default=utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -380,11 +402,12 @@ class Interview(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     application_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_applications.id", ondelete="SET NULL"), nullable=True)
-    candidate_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_candidates.id"))
-    job_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_jobs.id"))
+    candidate_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_candidates.id"), index=True)
+    job_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_jobs.id"), index=True)
     type: Mapped[InterviewType] = mapped_column(Enum(InterviewType), default=InterviewType.video)
     status: Mapped[InterviewStatus] = mapped_column(Enum(InterviewStatus), default=InterviewStatus.scheduled)
-    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
     location_or_link: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -409,12 +432,12 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     priority: Mapped[TaskPriority] = mapped_column(Enum(TaskPriority), default=TaskPriority.medium)
-    status: Mapped[TaskStatus] = mapped_column(Enum(TaskStatus), default=TaskStatus.todo)
-    due_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[TaskStatus] = mapped_column(Enum(TaskStatus), default=TaskStatus.todo, index=True)
+    due_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
-    assigned_to_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
-    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id"))
+    assigned_to_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True, index=True)
+    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -426,6 +449,7 @@ class Task(Base):
 
 class Notification(Base):
     __tablename__ = "crm_notifications"
+    __table_args__ = (Index("ix_crm_notifications_user_read", "user_id", "read"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id", ondelete="CASCADE"))
@@ -441,14 +465,189 @@ class Notification(Base):
 
 class ActivityLog(Base):
     __tablename__ = "crm_activity_logs"
+    __table_args__ = (Index("ix_crm_activity_entity", "entity_type", "entity_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id", ondelete="CASCADE"), index=True)
     action: Mapped[ActivityType] = mapped_column(Enum(ActivityType))
+    # Field-level before/after values for updates (who changed what)
+    changes: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     entity_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     entity_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     user: Mapped["User"] = relationship("User", back_populates="activities")
+
+# ── ATS stage history ─────────────────────────────────────────────────────────
+
+class ApplicationEvent(Base):
+    __tablename__ = "crm_application_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    application_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_applications.id", ondelete="CASCADE"), index=True)
+    from_stage: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    to_stage: Mapped[str] = mapped_column(String(50))
+    actor_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# ── Email outbox (every email; failures are kept and retried) ────────────────
+
+class EmailOutbox(Base):
+    __tablename__ = "crm_email_outbox"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    category: Mapped[str] = mapped_column(String(50), index=True)
+    to_email: Mapped[str] = mapped_column(String(255))
+    to_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    subject: Mapped[str] = mapped_column(String(255))
+    html: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|sent|failed|dead
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ── Agreements (MOU) -> Placements (joining) -> Invoices (billing) -> Incentives
+
+class AgreementStatus(str, enum.Enum):
+    draft = "draft"
+    active = "active"
+    expired = "expired"
+    terminated = "terminated"
+
+
+class FeeType(str, enum.Enum):
+    percentage = "percentage"   # % of the candidate's annual CTC
+    fixed = "fixed"             # fixed amount per placement
+
+
+class Agreement(Base):
+    """MOU with a client: the fee terms every placement and invoice is billed on."""
+    __tablename__ = "crm_agreements"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_companies.id"), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    fee_type: Mapped[FeeType] = mapped_column(Enum(FeeType), default=FeeType.percentage)
+    fee_value: Mapped[float] = mapped_column(Float)
+    payment_terms_days: Mapped[int] = mapped_column(Integer, default=30)
+    replacement_guarantee_days: Mapped[int] = mapped_column(Integer, default=90)
+    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[AgreementStatus] = mapped_column(Enum(AgreementStatus), default=AgreementStatus.draft, index=True)
+    document_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    company: Mapped["Company"] = relationship("Company")
+
+
+class PlacementStatus(str, enum.Enum):
+    offered = "offered"
+    joined = "joined"
+    dropped = "dropped"                      # offer accepted but never joined
+    left_in_guarantee = "left_in_guarantee"  # joined, then left within the replacement period
+
+
+class Placement(Base):
+    """A candidate placed with a client under an MOU. Fee terms are copied from the
+    MOU when the offer is recorded, so later MOU edits never change past billing."""
+    __tablename__ = "crm_placements"
+    __table_args__ = (Index("uq_crm_placements_candidate_job", "candidate_id", "job_id", unique=True),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_candidates.id"), index=True)
+    job_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_jobs.id"), index=True)
+    company_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_companies.id"), index=True)
+    agreement_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_agreements.id"), index=True)
+    recruiter_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True, index=True)
+    bdm_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True, index=True)
+    offered_ctc: Mapped[float] = mapped_column(Float)
+    offer_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expected_joining_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    joined_on: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    left_on: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[PlacementStatus] = mapped_column(Enum(PlacementStatus), default=PlacementStatus.offered, index=True)
+    fee_type: Mapped[FeeType] = mapped_column(Enum(FeeType))
+    fee_value: Mapped[float] = mapped_column(Float)
+    fee_amount: Mapped[float] = mapped_column(Float)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    joining_reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    candidate: Mapped["Candidate"] = relationship("Candidate")
+    job: Mapped["CRMJob"] = relationship("CRMJob")
+    company: Mapped["Company"] = relationship("Company")
+    agreement: Mapped["Agreement"] = relationship("Agreement")
+
+
+class InvoiceStatus(str, enum.Enum):
+    sent = "sent"
+    paid = "paid"
+    cancelled = "cancelled"
+
+
+class Invoice(Base):
+    """At most one non-cancelled invoice per placement; amounts come from the MOU terms."""
+    __tablename__ = "crm_invoices"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    invoice_number: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    placement_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_placements.id"), index=True)
+    agreement_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_agreements.id"), index=True)
+    company_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_companies.id"), index=True)
+    amount: Mapped[float] = mapped_column(Float)
+    gst_rate: Mapped[float] = mapped_column(Float, default=18.0)
+    gst_amount: Mapped[float] = mapped_column(Float)
+    total_amount: Mapped[float] = mapped_column(Float)
+    amount_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
+    override_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    issue_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[InvoiceStatus] = mapped_column(Enum(InvoiceStatus), default=InvoiceStatus.sent, index=True)
+    paid_on: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    overdue_notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    placement: Mapped["Placement"] = relationship("Placement")
+    company: Mapped["Company"] = relationship("Company")
+
+
+class IncentiveRule(Base):
+    """Incentive (royalty/commission) rate per role, as a % of the invoice amount
+    before GST. Only the owner can change these."""
+    __tablename__ = "crm_incentive_rules"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), unique=True)
+    percentage: Mapped[float] = mapped_column(Float, default=0.0)
+    updated_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class IncentiveStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    paid = "paid"
+    void = "void"
+
+
+class Incentive(Base):
+    """Server-computed payout for a team member on a paid invoice."""
+    __tablename__ = "crm_incentives"
+    __table_args__ = (Index("uq_crm_incentives_invoice_user", "invoice_id", "user_id", unique=True),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_users.id"), index=True)
+    placement_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_placements.id"), index=True)
+    invoice_id: Mapped[int] = mapped_column(Integer, ForeignKey("crm_invoices.id"), index=True)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole))
+    basis_amount: Mapped[float] = mapped_column(Float)
+    rate: Mapped[float] = mapped_column(Float)
+    amount: Mapped[float] = mapped_column(Float)
+    status: Mapped[IncentiveStatus] = mapped_column(Enum(IncentiveStatus), default=IncentiveStatus.pending, index=True)
+    void_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    approved_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

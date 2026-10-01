@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+import secrets
+
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
 from typing import Optional
 import json
 
 from app.auth.deps import get_current_user
 from app.core.config import settings
+from app.core.ratelimit import chatbot_ip_limiter, client_ip
 from app.models.user import User
 
 router = APIRouter(prefix="/chatbot", tags=["chatbot"])
@@ -66,8 +69,8 @@ def get_static_response(message: str) -> str:
 
 
 class ChatMessage(BaseModel):
-    message: str
-    conversation_id: Optional[str] = None
+    message: str = Field(..., min_length=1, max_length=1000)
+    conversation_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class ChatResponse(BaseModel):
@@ -77,8 +80,12 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/message", response_model=ChatResponse)
-async def chat(payload: ChatMessage):
-    conv_id = payload.conversation_id or "default"
+async def chat(payload: ChatMessage, request: Request):
+    chatbot_ip_limiter.check(client_ip(request), "You're sending messages too quickly. Please wait a moment.")
+    # Each visitor gets their own conversation; never fall back to a shared one
+    conv_id = payload.conversation_id or secrets.token_urlsafe(12)
+    if len(_conversations) > 5000 and conv_id not in _conversations:
+        _conversations.pop(next(iter(_conversations)))  # oldest first; bounds memory
 
     if settings.OPENAI_API_KEY:
         try:

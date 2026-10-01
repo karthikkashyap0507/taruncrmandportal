@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { interviewsApi, candidatesApi, jobsApi } from "@/lib/api";
+import { interviewsApi, candidatesApi, jobsApi, apiError } from "@/lib/api";
 import toast from "react-hot-toast";
 import { Plus, Calendar, Clock, Video, Phone, MapPin } from "lucide-react";
 import { format } from "date-fns";
@@ -29,7 +29,7 @@ function ScheduleForm({ onClose, onSaved }: { onClose: () => void; onSaved: () =
       await interviewsApi.schedule({ ...form, candidate_id: parseInt(form.candidate_id), job_id: parseInt(form.job_id) });
       toast.success("Interview scheduled");
       onSaved(); onClose();
-    } catch (e: any) { toast.error(e.response?.data?.detail || "Failed"); }
+    } catch (e: any) { toast.error(apiError(e, "Failed")); }
     finally { setSaving(false); }
   }
 
@@ -55,7 +55,7 @@ function ScheduleForm({ onClose, onSaved }: { onClose: () => void; onSaved: () =
               {jobs?.map((j: any) => <option key={j.id} value={j.id}>{j.title} — {j.client_name || "Internal"}</option>)}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
               <select className="input" value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>

@@ -52,6 +52,11 @@ export const authApi = {
   resetPassword: (token: string, new_password: string) =>
     api.post("/auth/reset-password", { token, new_password }),
   me: () => api.get("/users/me"),
+  changePassword: (current_password: string, new_password: string) =>
+    api.post("/auth/change-password", { current_password, new_password }),
+  sessions: () => api.get("/auth/sessions"),
+  revokeSession: (id: number) => api.delete(`/auth/sessions/${id}`),
+  logoutAll: () => api.post("/auth/logout-all"),
 };
 
 // Users
@@ -62,6 +67,9 @@ export const usersApi = {
   update: (id: number, data: object) => api.put(`/users/${id}`, data),
   delete: (id: number) => api.delete(`/users/${id}`),
   activity: (id: number) => api.get(`/users/${id}/activity`),
+  // Names + roles of active team members (any role; used for assignment dropdowns)
+  directory: () => api.get("/users/directory"),
+  updateMe: (data: object) => api.put("/users/me", data),
 };
 
 // Leads
@@ -146,6 +154,8 @@ export const analyticsApi = {
   candidatesByStatus: () => api.get("/analytics/candidates/by-status"),
   teamPerformance: (days?: number) => api.get("/analytics/team/performance", { params: { days } }),
   revenue: () => api.get("/analytics/revenue"),
+  revenueMonthly: (months?: number) => api.get("/analytics/revenue/monthly", { params: { months } }),
+  placementsSummary: () => api.get("/analytics/placements/summary"),
 };
 
 // Tasks
@@ -164,3 +174,76 @@ export const notificationsApi = {
   markRead: (id: number) => api.patch(`/notifications/${id}/read`),
   markAllRead: () => api.patch("/notifications/read-all"),
 };
+
+// Private files (resumes, signed MOUs): the API returns short-lived signed paths
+export const fileUrl = (path?: string | null) =>
+  path ? (path.startsWith("http") ? path : `${BASE_URL}${path}`) : undefined;
+
+// Readable error text from an API failure
+export const apiError = (e: any, fallback = "Something went wrong") => {
+  const d = e?.response?.data?.detail;
+  return typeof d === "string" ? d : fallback;
+};
+
+// MOUs / client agreements
+export const agreementsApi = {
+  list: (params?: object) => api.get("/agreements", { params }),
+  get: (id: number) => api.get(`/agreements/${id}`),
+  create: (data: object) => api.post("/agreements", data),
+  update: (id: number, data: object) => api.put(`/agreements/${id}`, data),
+  setStatus: (id: number, status: string) => api.post(`/agreements/${id}/status`, null, { params: { status } }),
+  uploadDocument: (id: number, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api.post(`/agreements/${id}/document`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+  },
+};
+
+// Placements (offer -> joining)
+export const placementsApi = {
+  list: (params?: object) => api.get("/placements", { params }),
+  get: (id: number) => api.get(`/placements/${id}`),
+  create: (data: object) => api.post("/placements", data),
+  update: (id: number, data: object) => api.put(`/placements/${id}`, data),
+  setStatus: (id: number, status: string, date?: string, note?: string) =>
+    api.post(`/placements/${id}/status`, { status, date, note }),
+};
+
+// Invoices
+export const invoicesApi = {
+  list: (params?: object) => api.get("/invoices", { params }),
+  create: (data: object) => api.post("/invoices", data),
+  markPaid: (id: number) => api.post(`/invoices/${id}/mark-paid`),
+  cancel: (id: number, reason: string) => api.post(`/invoices/${id}/cancel`, { reason }),
+};
+
+// Incentives
+export const incentivesApi = {
+  list: (params?: object) => api.get("/incentives", { params }),
+  summary: () => api.get("/incentives/summary"),
+  rules: () => api.get("/incentives/rules"),
+  updateRule: (role: string, percentage: number) => api.put(`/incentives/rules/${role}`, { percentage }),
+  approve: (id: number) => api.post(`/incentives/${id}/approve`),
+  markPaid: (id: number) => api.post(`/incentives/${id}/mark-paid`),
+  void: (id: number, reason: string) => api.post(`/incentives/${id}/void`, { reason }),
+};
+
+// Owner tools: audit trail + email delivery log
+export const auditApi = {
+  logs: (params?: object) => api.get("/audit-logs", { params }),
+  deliveries: (params?: object) => api.get("/notifications/deliveries", { params }),
+  retryDelivery: (id: number) => api.post(`/notifications/deliveries/${id}/retry`),
+  retryAllFailed: () => api.post("/notifications/deliveries/retry-failed"),
+};
+
+// CSV exports (downloaded with the user's token)
+export const downloadReport = async (report: string) => {
+  const res = await api.get(`/reports/${report}.csv`, { responseType: "blob" });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${report}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+

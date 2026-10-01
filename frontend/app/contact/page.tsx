@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Building2, Mail, MapPin, Phone, User } from "lucide-react";
 import { useForm } from "react-hook-form";
@@ -14,12 +15,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { CONTACT_CONTENT } from "@/lib/site-content";
+import { apiError, publicApi } from "@/services/api";
 
 const contactSchema = z.object({
-  name: z.string().min(2, "Name is required"),
+  name: z.string().trim().min(2, "Name is required").max(120, "Name is too long"),
   email: z.string().email("Valid email required"),
-  subject: z.string().min(3, "Subject is required"),
-  message: z.string().min(10, "Message must be at least 10 characters"),
+  subject: z.string().trim().min(3, "Subject is required").max(200, "Subject is too long"),
+  message: z.string().trim().min(10, "Message must be at least 10 characters").max(5000, "Message is too long (5,000 characters max)"),
 });
 
 type ContactForm = z.infer<typeof contactSchema>;
@@ -66,9 +68,17 @@ export default function ContactPage() {
     resolver: zodResolver(contactSchema),
   });
 
-  const onSubmit = async () => {
-    await new Promise((r) => setTimeout(r, 800));
-    reset();
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const onSubmit = async (data: ContactForm) => {
+    setResult(null);
+    try {
+      const res = await publicApi.contact(data);
+      setResult({ ok: true, text: res.data.message });
+      reset();
+    } catch (e) {
+      setResult({ ok: false, text: apiError(e, "Sorry, your message couldn't be sent. Please email us directly.") });
+    }
   };
 
   return (
@@ -252,6 +262,14 @@ export default function ContactPage() {
                   <p className="mt-1 text-xs text-[#EF4444]">{errors.message.message}</p>
                 )}
               </div>
+              {result && (
+                <p
+                  role="status"
+                  className={`rounded-lg px-3 py-2 text-sm ${result.ok ? "bg-[#22C55E]/10 text-[#4ADE80]" : "bg-[#EF4444]/10 text-[#F87171]"}`}
+                >
+                  {result.text}
+                </p>
+              )}
               <Button
                 type="submit"
                 disabled={isSubmitting}

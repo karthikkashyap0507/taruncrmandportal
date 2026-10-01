@@ -1,13 +1,14 @@
 from typing import Optional, List
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, update
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
-from app.models import Company, Contact, User, Lead
+from app.core.deps import get_current_user, require_owner, require_owner_or_bdm
+from app.models import ActivityType, Agreement, Company, Contact, CRMJob, Invoice, Lead, Placement, User
+from app.services.activity import diff, log_activity
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -76,8 +77,8 @@ def _serialize_contact(c: Contact) -> dict:
 async def list_clients(
     search: Optional[str] = Query(None),
     industry: Optional[str] = None,
-    page: int = 1,
-    limit: int = 20,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -99,11 +100,15 @@ async def list_clients(
 @router.post("/", status_code=201)
 async def create_client(
     payload: CompanyCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_owner_or_bdm),
 ):
     company = Company(**payload.model_dump(exclude_none=True))
     db.add(company)
+    await db.flush()
+    log_activity(db, current_user, ActivityType.create, f"Added client {company.name}", "client", company.id,
+                 request=request)
     await db.commit()
     await db.refresh(company)
     return _serialize_company(company)
@@ -128,15 +133,21 @@ async def get_client(company_id: int, db: AsyncSession = Depends(get_db), curren
 async def update_client(
     company_id: int,
     payload: CompanyUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_owner_or_bdm),
 ):
     result = await db.execute(select(Company).where(Company.id == company_id))
     company = result.scalar_one_or_none()
     if not company:
         raise HTTPException(404, "Client not found")
-    for field, val in payload.model_dump(exclude_none=True).items():
+    data = payload.model_dump(exclude_none=True)
+    changes = diff(company, data)
+    for field, val in data.items():
         setattr(company, field, val)
+    if changes:
+        log_activity(db, current_user, ActivityType.update, f"Updated client {company.name}", "client",
+                     company.id, changes=changes, request=request)
     await db.commit()
     return _serialize_company(company)
 
@@ -144,13 +155,20 @@ async def update_client(
 @router.delete("/{company_id}")
 async def delete_client(
     company_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_owner),
 ):
     result = await db.execute(select(Company).where(Company.id == company_id))
     company = result.scalar_one_or_none()
     if not company:
         raise HTTPException(404, "Client not found")
+    for model, label in ((Agreement, "MOUs"), (Placement, "placements"), (Invoice, "invoices")):
+        if (await db.execute(select(func.count()).select_from(model).where(model.company_id == company_id))).scalar():
+            raise HTTPException(409, f"This client has {label} linked to billing and can't be deleted")
+    await db.execute(update(CRMJob).where(CRMJob.company_id == company_id).values(company_id=None))
+    log_activity(db, current_user, ActivityType.delete, f"Deleted client {company.name}", "client", company.id,
+                 request=request)
     await db.delete(company)
     await db.commit()
     return {"message": "Client deleted"}
@@ -160,11 +178,19 @@ async def delete_client(
 async def add_contact(
     company_id: int,
     payload: ContactCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_owner_or_bdm),
 ):
-    contact = Contact(**payload.model_dump(exclude_none=True))
+    if not await db.get(Company, company_id):
+        raise HTTPException(404, "Client not found")
+    data = payload.model_dump(exclude_none=True)
+    data["company_id"] = company_id  # the URL decides which client the contact belongs to
+    contact = Contact(**data)
     db.add(contact)
+    await db.flush()
+    log_activity(db, current_user, ActivityType.create, f"Added contact {contact.name}", "client", company_id,
+                 request=request)
     await db.commit()
     await db.refresh(contact)
     return _serialize_contact(contact)
@@ -174,15 +200,22 @@ async def add_contact(
 async def update_contact(
     contact_id: int,
     payload: ContactCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_owner_or_bdm),
 ):
     result = await db.execute(select(Contact).where(Contact.id == contact_id))
     contact = result.scalar_one_or_none()
     if not contact:
         raise HTTPException(404, "Contact not found")
-    for field, val in payload.model_dump(exclude_none=True).items():
+    data = payload.model_dump(exclude_none=True)
+    data.pop("company_id", None)  # contacts can't be moved to another client
+    changes = diff(contact, data)
+    for field, val in data.items():
         setattr(contact, field, val)
+    if changes:
+        log_activity(db, current_user, ActivityType.update, f"Updated contact {contact.name}", "client",
+                     contact.company_id, changes=changes, request=request)
     await db.commit()
     return _serialize_contact(contact)
 
@@ -190,13 +223,16 @@ async def update_contact(
 @router.delete("/contacts/{contact_id}")
 async def delete_contact(
     contact_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_owner_or_bdm),
 ):
     result = await db.execute(select(Contact).where(Contact.id == contact_id))
     contact = result.scalar_one_or_none()
     if not contact:
         raise HTTPException(404, "Contact not found")
+    log_activity(db, current_user, ActivityType.delete, f"Deleted contact {contact.name}", "client",
+                 contact.company_id, request=request)
     await db.delete(contact)
     await db.commit()
     return {"message": "Contact deleted"}

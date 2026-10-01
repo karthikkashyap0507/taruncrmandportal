@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApplyDialog } from "@/components/shared/apply-dialog";
-import { jobsApi, savedJobsApi } from "@/services/api";
+import { jobsApi, savedJobsApi, apiError } from "@/services/api";
 import { formatSalary } from "@/lib/format";
 import { useAuthStore } from "@/store/auth-store";
 import type { Job } from "@/types";
@@ -183,7 +183,9 @@ export default function JobDetailsPage() {
         await savedJobsApi.save(job.id);
         setSaved(true);
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      alert(apiError(e, "Could not update saved jobs"));
+    }
     finally { setSavingJob(false); }
   };
 

@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { profilesApi } from "@/services/api";
+import { profilesApi, apiError } from "@/services/api";
 import { fetchMe } from "@/services/auth";
 import { useAuthStore } from "@/store/auth-store";
 
@@ -109,7 +109,7 @@ export default function ResumeBuilderPage() {
         experience: resumeData.experience,
       });
       alert("Saved to profile!");
-    } catch { alert("Failed to save"); }
+    } catch (e) { alert(apiError(e, "Failed to save")); }
     finally { setSaving(false); }
   };
 

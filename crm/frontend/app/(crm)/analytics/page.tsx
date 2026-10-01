@@ -1,5 +1,6 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
+import { useAuthStore } from "@/store/auth";
 import { analyticsApi } from "@/lib/api";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -17,8 +18,9 @@ export default function AnalyticsPage() {
   const { data: trend } = useQuery({ queryKey: ["leads-trend"], queryFn: () => analyticsApi.leadsTrend(30).then(r => r.data) });
   const { data: pipeline } = useQuery({ queryKey: ["leads-pipeline"], queryFn: () => analyticsApi.leadsPipeline().then(r => r.data) });
   const { data: candStatus } = useQuery({ queryKey: ["cand-status"], queryFn: () => analyticsApi.candidatesByStatus().then(r => r.data) });
-  const { data: team } = useQuery({ queryKey: ["team-perf"], queryFn: () => analyticsApi.teamPerformance().then(r => r.data) });
-  const { data: revenue } = useQuery({ queryKey: ["revenue"], queryFn: () => analyticsApi.revenue().then(r => r.data) });
+  const role = useAuthStore(s => s.user?.role);
+  const { data: team } = useQuery({ queryKey: ["team-perf"], queryFn: () => analyticsApi.teamPerformance().then(r => r.data), enabled: role === "owner" });
+  const { data: revenue } = useQuery({ queryKey: ["revenue"], queryFn: () => analyticsApi.revenue().then(r => r.data), enabled: role === "owner" || role === "bdm" });
 
   const pipelineData = pipeline?.map((p: any, i: number) => ({
     name: p.status.charAt(0).toUpperCase() + p.status.slice(1),

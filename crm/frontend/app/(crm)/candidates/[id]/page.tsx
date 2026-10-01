@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { candidatesApi } from "@/lib/api";
+import { candidatesApi, apiError, fileUrl } from "@/lib/api";
+import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
 import {
@@ -41,6 +42,7 @@ export default function CandidateDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
+  const isOwner = useAuthStore(s => s.user?.role === "owner");
 
   const [editOpen, setEditOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
@@ -56,13 +58,13 @@ export default function CandidateDetailPage() {
   const statusMutation = useMutation({
     mutationFn: (status: string) => candidatesApi.update(Number(id), { status }),
     onSuccess: () => { toast.success("Status updated"); qc.invalidateQueries({ queryKey: ["candidate", id] }); },
-    onError: () => toast.error("Failed to update status"),
+    onError: (e: any) => toast.error(apiError(e, "Failed to update status")),
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => candidatesApi.delete(Number(id)),
     onSuccess: () => { toast.success("Candidate deleted"); router.push("/candidates"); },
-    onError: () => toast.error("Failed to delete"),
+    onError: (e: any) => toast.error(apiError(e, "Failed to delete")),
   });
 
   async function submitNote() {
@@ -73,8 +75,8 @@ export default function CandidateDetailPage() {
       setNoteText("");
       toast.success("Note added");
       qc.invalidateQueries({ queryKey: ["candidate", id] });
-    } catch {
-      toast.error("Failed to add note");
+    } catch (e: any) {
+      toast.error(apiError(e, "Failed to add note"));
     } finally {
       setAddingNote(false);
     }
@@ -130,12 +132,14 @@ export default function CandidateDetailPage() {
           <button onClick={() => setEditOpen(true)} className="btn-secondary flex items-center gap-1.5 text-sm">
             <Edit2 size={14} /> Edit
           </button>
-          <button
-            onClick={() => { if (confirm("Delete this candidate permanently?")) deleteMutation.mutate(); }}
-            className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-          >
-            <Trash2 size={16} />
-          </button>
+          {isOwner && (
+            <button
+              onClick={() => { if (confirm("Delete this candidate permanently?")) deleteMutation.mutate(); }}
+              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -156,16 +160,37 @@ export default function CandidateDetailPage() {
               <InfoRow label="Notice Period" value={candidate.notice_period} icon={Clock} />
               <InfoRow label="LinkedIn" value={candidate.linkedin_url} icon={Linkedin} />
             </div>
-            {candidate.resume_url && (
-              <a
-                href={candidate.resume_url}
-                target="_blank"
-                rel="noreferrer"
-                className="btn-secondary inline-flex items-center gap-2 text-sm mt-4"
-              >
-                <FileText size={14} /> View Resume
-              </a>
-            )}
+            <div className="flex flex-wrap gap-2 mt-4">
+              {candidate.resume_url && (
+                <a
+                  href={fileUrl(candidate.resume_url)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-secondary inline-flex items-center gap-2 text-sm"
+                >
+                  <FileText size={14} /> View Resume
+                </a>
+              )}
+              <label className="btn-secondary inline-flex items-center gap-2 text-sm cursor-pointer">
+                <FileText size={14} /> {candidate.resume_url ? "Replace resume" : "Upload resume"}
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx"
+                  className="hidden"
+                  onChange={async e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      await candidatesApi.uploadResume(Number(id), file);
+                      toast.success("Resume uploaded");
+                      qc.invalidateQueries({ queryKey: ["candidate", id] });
+                    } catch (err: any) {
+                      toast.error(apiError(err, "Upload failed"));
+                    }
+                  }}
+                />
+              </label>
+            </div>
           </Section>
 
           {candidate.skills?.length > 0 && (
@@ -280,7 +305,6 @@ function EditCandidateModal({ candidate, onClose, onSaved }: { candidate: any; o
     expected_salary: candidate.expected_salary || "",
     notice_period: candidate.notice_period || "",
     linkedin_url: candidate.linkedin_url || "",
-    resume_url: candidate.resume_url || "",
     status: candidate.status || "new",
     skills: (candidate.skills || []).join(", "),
   });
@@ -299,7 +323,7 @@ function EditCandidateModal({ candidate, onClose, onSaved }: { candidate: any; o
       onSaved();
       onClose();
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || "Failed to save");
+      toast.error(apiError(e, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -312,7 +336,7 @@ function EditCandidateModal({ candidate, onClose, onSaved }: { candidate: any; o
           <h2 className="text-lg font-semibold">Edit Candidate</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
-        <div className="p-6 grid grid-cols-2 gap-4">
+        <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
             { label: "Name *", key: "name" },
             { label: "Email", key: "email", type: "email" },
@@ -324,7 +348,6 @@ function EditCandidateModal({ candidate, onClose, onSaved }: { candidate: any; o
             { label: "Expected Salary", key: "expected_salary" },
             { label: "Notice Period", key: "notice_period" },
             { label: "LinkedIn URL", key: "linkedin_url" },
-            { label: "Resume URL", key: "resume_url" },
           ].map(field => (
             <div key={field.key}>
               <label className="block text-xs font-medium text-gray-600 mb-1">{field.label}</label>
@@ -342,7 +365,7 @@ function EditCandidateModal({ candidate, onClose, onSaved }: { candidate: any; o
               {STATUSES.map(o => <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
             </select>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Skills (comma separated)</label>
             <input
               type="text"

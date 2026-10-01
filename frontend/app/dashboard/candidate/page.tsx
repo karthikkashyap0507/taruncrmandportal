@@ -20,6 +20,8 @@ const STATUS_CONFIG: Record<ApplicationStatus, { label: string; color: string; b
   screening: { label: "Screening", color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/20" },
   interview: { label: "Interview", color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
   offered:   { label: "Offered",   color: "text-green-400",  bg: "bg-green-500/10 border-green-500/20" },
+  hired:     { label: "Hired",     color: "text-emerald-300", bg: "bg-emerald-500/20 border-emerald-500/30" },
+  withdrawn: { label: "Withdrawn", color: "text-slate-400",   bg: "bg-slate-500/10 border-slate-500/30" },
   rejected:  { label: "Rejected",  color: "text-red-400",    bg: "bg-red-500/10 border-red-500/20" },
 };
 

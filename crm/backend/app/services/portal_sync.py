@@ -145,8 +145,31 @@ async def _upsert_job(db: AsyncSession, pj: dict) -> tuple[CRMJob, bool]:
     return job, True
 
 
-async def _upsert_candidate(db: AsyncSession, app: dict) -> Candidate:
+async def _import_resume(client: httpx.AsyncClient | None, url: str | None, portal_cand_id) -> str | None:
+    """Copy a resume from the portal (signed, short-lived link) into CRM private storage."""
+    import os
+    import uuid
+    from app.core.files import canonical_url, content_matches, private_dir
+    if not client or not url or not url.startswith("/api/v1/files/resumes/"):
+        return None
+    origin = settings.PORTAL_API_URL.split("/api/", 1)[0]
+    ext = os.path.splitext(url.split("?", 1)[0])[1].lower()
+    try:
+        resp = await client.get(origin + url)
+        if resp.status_code != 200 or len(resp.content) > 10 * 1024 * 1024 or not content_matches(resp.content, ext):
+            return None
+        filename = f"p{portal_cand_id}_{uuid.uuid4().hex}{ext}"
+        with open(os.path.join(private_dir("resumes"), filename), "wb") as f:
+            f.write(resp.content)
+        return canonical_url("resumes", filename)
+    except Exception:
+        logger.exception("could not import resume for portal candidate %s", portal_cand_id)
+        return None
+
+
+async def _upsert_candidate(db: AsyncSession, app: dict, client: httpx.AsyncClient | None = None) -> Candidate:
     """Insert or update a CRM candidate from a portal application dict."""
+    from app.services.dedupe import find_duplicates, normalize_email, normalize_phone
     info = app.get("candidate_info") or {}
     portal_cand_id = app.get("candidate_id")
 
@@ -157,35 +180,38 @@ async def _upsert_candidate(db: AsyncSession, app: dict) -> Candidate:
                 select(Candidate).where(Candidate.portal_candidate_id == portal_cand_id)
             )
         ).scalar_one_or_none()
-    # Fall back to email match to avoid duplicates from earlier manual entry
-    if not existing and info.get("email"):
-        existing = (
-            await db.execute(select(Candidate).where(Candidate.email == info["email"]))
-        ).scalar_one_or_none()
+    # Fall back to email/phone match so a candidate entered by hand isn't duplicated
+    if not existing:
+        dups = await find_duplicates(db, info.get("email"), app.get("phone"))
+        existing = dups[0] if dups else None
 
     fields = dict(
         name=info.get("name") or app.get("full_name") or "Unknown",
-        email=info.get("email"),
+        email=normalize_email(info.get("email")),
         phone=app.get("phone"),
+        phone_normalized=normalize_phone(app.get("phone")),
         experience_years=float(app["years_experience"]) if app.get("years_experience") else None,
         skills=info.get("skills") or [],
-        resume_url=info.get("resume_url") or app.get("resume_url"),
+        resume_url=None,  # filled below from a private copy (portal links expire)
         ats_score=int(app["score"]) if app.get("score") is not None else None,
         status=_CAND_STATUS_MAP.get(str(app.get("status")), CandidateStatus.new),
         source="portal",
         portal_candidate_id=portal_cand_id,
     )
 
+    target = existing
     if existing:
         for k, v in fields.items():
             if v is not None or k in ("portal_candidate_id",):
                 setattr(existing, k, v)
         existing.updated_at = _utcnow()
-        return existing
-
-    cand = Candidate(**fields)
-    db.add(cand)
-    return cand
+    else:
+        target = Candidate(**fields)
+        db.add(target)
+    if not target.resume_url:
+        target.resume_url = await _import_resume(client, info.get("resume_url") or app.get("resume_url"),
+                                                 portal_cand_id)
+    return target
 
 
 async def _upsert_application(
@@ -254,7 +280,7 @@ async def sync_applications(db: AsyncSession) -> dict:
             apps = await client_obj.fetch_applications(client, pj["id"])
             for app in apps:
                 before = await _count_candidates(db)
-                crm_cand = await _upsert_candidate(db, app)
+                crm_cand = await _upsert_candidate(db, app, client)
                 await db.flush()
                 after = await _count_candidates(db)
                 cand_created += int(after > before)

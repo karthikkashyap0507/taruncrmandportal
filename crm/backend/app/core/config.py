@@ -45,6 +45,25 @@ class Settings(BaseSettings):
     # File uploads
     UPLOAD_DIR: str = "uploads"
     MAX_FILE_SIZE_MB: int = 10
+    # Candidate documents and signed MOUs: private, served only via signed links
+    PRIVATE_UPLOAD_DIR: str = "private_uploads"
+    SIGNED_URL_TTL_SECONDS: int = 1800
+
+    # Email delivery: "smtp" sends for real; "console" only logs (local dev and tests)
+    EMAIL_BACKEND: str = "smtp"
+    EMAIL_MAX_ATTEMPTS: int = 5
+
+    # Login protection
+    LOGIN_MAX_FAILURES: int = 5
+    LOGIN_LOCKOUT_MINUTES: int = 15
+
+    # Billing defaults (used when an invoice is raised)
+    GST_RATE_PERCENT: float = 18.0
+    INVOICE_PREFIX: str = "JNG"
+
+    # Background jobs (email retries, reminders); interval in seconds
+    SCHEDULER_INTERVAL_SECONDS: int = 60
+    SLOW_REQUEST_MS: int = 1000
 
     # AI (rule-based, no external API needed)
     AI_ENABLED: bool = True

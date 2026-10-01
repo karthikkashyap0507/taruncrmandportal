@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { tasksApi } from "@/lib/api";
+import { tasksApi, apiError } from "@/lib/api";
+import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 import { Plus, Trash2, Check, Clock, AlertCircle } from "lucide-react";
 import { format } from "date-fns";
@@ -47,7 +48,7 @@ function TaskForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
             <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
             <textarea className="input h-20 resize-none" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Priority</label>
               <select className="input" value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}>
@@ -71,6 +72,8 @@ function TaskForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
 
 export default function TasksPage() {
   const qc = useQueryClient();
+  const me = useAuthStore(s => s.user);
+  const canDelete = (task: any) => me?.role === "owner" || task.created_by_id === me?.id;
   const [showForm, setShowForm] = useState(false);
   const [myOnly, setMyOnly] = useState(true);
   const [filter, setFilter] = useState("");
@@ -83,11 +86,13 @@ export default function TasksPage() {
   const completeMutation = useMutation({
     mutationFn: (id: number) => tasksApi.update(id, { status: "done" }),
     onSuccess: () => { toast.success("Task completed"); qc.invalidateQueries({ queryKey: ["tasks"] }); },
+    onError: (e: any) => toast.error(apiError(e, "Failed to update task")),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => tasksApi.delete(id),
     onSuccess: () => { toast.success("Task deleted"); qc.invalidateQueries({ queryKey: ["tasks"] }); },
+    onError: (e: any) => toast.error(apiError(e, "Failed to delete task")),
   });
 
   const filtered = tasks.filter((t: any) =>
@@ -162,12 +167,14 @@ export default function TasksPage() {
                         <Check size={13} />
                       </button>
                     )}
-                    <button
-                      onClick={() => { if (confirm("Delete task?")) deleteMutation.mutate(task.id); }}
-                      className="p-1.5 hover:bg-red-50 rounded text-gray-400 hover:text-red-500 transition-colors"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    {canDelete(task) && (
+                      <button
+                        onClick={() => { if (confirm("Delete task?")) deleteMutation.mutate(task.id); }}
+                        className="p-1.5 hover:bg-red-50 rounded text-gray-400 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

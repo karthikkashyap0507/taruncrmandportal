@@ -1,0 +1,250 @@
+{
+  "run_at": "2026-10-01T13:31:22",
+  "results": [
+    {
+      "section": "Notifications",
+      "item": "N-6a",
+      "title": "Failed notifications are logged with the error and a retry time",
+      "status": "PASS",
+      "evidence": "portal email #1 status=failed error='simulated delivery failure (EMAIL_BACKEND=fai...' retry scheduled at 2026-10-01 08:01:50.308033; CRM email #1 status=failed"
+    },
+    {
+      "section": "Notifications",
+      "item": "N-6b",
+      "title": "Admins can see failed emails and retry them",
+      "status": "PASS",
+      "evidence": "admin retry while SMTP is down -> still 'failed' (attempt counted); failures visible to portal admin (1) and CRM owner (1)"
+    },
+    {
+      "section": "Notifications",
+      "item": "N-6c",
+      "title": "Failed emails are delivered when retried after recovery",
+      "status": "PASS",
+      "evidence": "after SMTP recovered: portal email #1 -> sent; CRM retry-failed sent 1/1"
+    },
+    {
+      "section": "Login & Session",
+      "item": "AUTH-1",
+      "title": "Login / logout (logout revokes tokens immediately)",
+      "status": "PASS",
+      "evidence": "portal: token works -> logout -> same access token 401, refresh 401; CRM: same (access token rejected immediately after logout)"
+    },
+    {
+      "section": "Login & Session",
+      "item": "AUTH-2",
+      "title": "Password reset",
+      "status": "PASS",
+      "evidence": "portal + CRM: reset email queued -> new password works, old password fails, existing sessions revoked, reset link single-use"
+    },
+    {
+      "section": "Login & Session",
+      "item": "AUTH-3",
+      "title": "Session expiry",
+      "status": "PASS",
+      "evidence": "expired access tokens -> 401 and expired sessions can't be refreshed (portal + CRM); access tokens last 60 min, sessions 7 days"
+    },
+    {
+      "section": "Login & Session",
+      "item": "AUTH-4",
+      "title": "Multiple-device sessions",
+      "status": "PASS",
+      "evidence": "portal: 3 devices listed, revoking one signs only that device out, logout-all ends the rest; CRM: back-to-back logins both succeed (3 sessions), per-device revoke works"
+    },
+    {
+      "section": "Login & Session",
+      "item": "AUTH-5",
+      "title": "Account lockout / rate limiting",
+      "status": "PASS",
+      "evidence": "5 wrong passwords -> account locked (423) even for the right password, on both apps; 25 rapid attempts from one IP -> 429 after 20 (portal) / 20 (CRM) with Retry-After"
+    },
+    {
+      "section": "Login & Session",
+      "item": "AUTH-6",
+      "title": "Unauthorized dashboard access",
+      "status": "PASS",
+      "evidence": "7 API probes rejected (401 without login, 403 wrong role); all 4 portal dashboards and the CRM layout redirect unauthorised users"
+    },
+    {
+      "section": "P0",
+      "item": "P0-1",
+      "title": "Data leakage",
+      "status": "PASS",
+      "evidence": "another company's recruiter can't read the conversation or applicants (404); draft jobs hidden from the public; chatbot visitors no longer share one conversation; resumes not served from public /static; live-notification socket refuses connections without a valid token; CRM HR users can't open others' leads/tasks by ID or see billing"
+    },
+    {
+      "section": "P0",
+      "item": "P0-2",
+      "title": "API authorization",
+      "status": "PASS",
+      "evidence": "8 authorization probes behave correctly; manual ATS score ignored (stays 10)"
+    },
+    {
+      "section": "P0",
+      "item": "P0-3",
+      "title": "Role permissions",
+      "status": "PASS",
+      "evidence": "31 role/endpoint combinations match the permission matrix (owner / BDM / HR)"
+    },
+    {
+      "section": "P0",
+      "item": "P0-4",
+      "title": "Candidate document security",
+      "status": "PASS",
+      "evidence": "fake PDF rejected (400), >5 MB rejected (413); recruiter gets a signed link that works; unsigned, tampered and expired links -> 403; another candidate can't attach my resume; javascript: links refused; CRM: content-checked uploads, private storage, signed links only"
+    },
+    {
+      "section": "P0",
+      "item": "P0-5",
+      "title": "Royalty / incentive manipulation",
+      "status": "PASS",
+      "evidence": "there is no API to create or edit an incentive amount (405); HR can't change rates or approve their own payout (403); HR sees only their own incentives; amount = invoice 140,000 x 5.0% = 7,000, computed by the server for exactly the credited recruiter and BDM; fee and credited recruiter can't be set by the client; invoice amount override: BDM 403, owner needs a reason (audited); incentives voided when the invoice is cancelled (2) and when the candidate leaves within guarantee (2)"
+    },
+    {
+      "section": "P1",
+      "item": "P1-1",
+      "title": "Duplicate candidates",
+      "status": "PASS",
+      "evidence": "same email (different case) and same phone (different format) -> 409 naming the existing record; owner can merge duplicates: applications move over, missing fields filled, duplicate removed; portal: 8 simultaneous apply clicks -> exactly 1 application"
+    },
+    {
+      "section": "P1",
+      "item": "P1-2",
+      "title": "ATS workflow",
+      "status": "PASS",
+      "evidence": "portal: forward moves allowed; moving back, hiring without an offer and changing a hired application are blocked (409); full history recorded; only the candidate can withdraw; CRM: unknown stages, skipping to hired and moving back blocked; duplicate pipeline entry 409; candidate status follows the stage"
+    },
+    {
+      "section": "P1",
+      "item": "P1-3",
+      "title": "MOU / billing linkage",
+      "status": "PASS",
+      "evidence": "placement blocked with no MOU or a draft MOU; only the owner activates or changes active terms; fee = 12.5% x CTC 12,00,000 = 1,50,000 frozen at offer (unchanged after the MOU went to 20%); invoice only after joining, once per placement, 1,50,000 + 18% GST = 1,77,000, due in the MOU's 30 days"
+    },
+    {
+      "section": "P1",
+      "item": "P1-4",
+      "title": "Audit logs",
+      "status": "PASS",
+      "evidence": "CRM records who changed what with before/after values (e.g. lead temperature cold->hot), the invoice override reason, and 7 security events; portal admin log shows 5 failed logins, 1 lockouts, 3 ATS status changes and 5 job changes"
+    },
+    {
+      "section": "Notifications",
+      "item": "N-1",
+      "title": "Candidate updates",
+      "status": "PASS",
+      "evidence": "portal: candidate emailed on every status change; CRM: candidate emailed when shortlisted, the recruiter who added them gets an in-app alert"
+    },
+    {
+      "section": "Notifications",
+      "item": "N-2",
+      "title": "Interview notifications",
+      "status": "PASS",
+      "evidence": "scheduling emails the candidate and alerts interviewers in-app; rescheduling sends an update; the scheduler sends a reminder inside 24 h; past times rejected"
+    },
+    {
+      "section": "Notifications",
+      "item": "N-3",
+      "title": "Joining notifications",
+      "status": "PASS",
+      "evidence": "candidate gets a congratulations email on joining and a reminder the day before; owner/BDM/recruiter get in-app joining alerts"
+    },
+    {
+      "section": "Notifications",
+      "item": "N-4",
+      "title": "Employer / client notifications",
+      "status": "PASS",
+      "evidence": "client's primary contact emailed on joining (3) and when invoices are raised (4)"
+    },
+    {
+      "section": "Notifications",
+      "item": "N-5",
+      "title": "HR / BDM alerts",
+      "status": "PASS",
+      "evidence": "lead and task assignments alert the assignee (in-app + email); follow-ups remind 15 min ahead; overdue invoices alert owners and BDMs"
+    },
+    {
+      "section": "Database Performance",
+      "item": "DB-1",
+      "title": "Slow queries",
+      "status": "PASS",
+      "evidence": "all key endpoints p95 < 500 ms on seeded data; slowest: CRM GET /jobs/{id} (2,000 applicants) p95 103 ms; requests over 1 s are logged as warnings"
+    },
+    {
+      "section": "Database Performance",
+      "item": "DB-2",
+      "title": "Missing database indexes",
+      "status": "PASS",
+      "evidence": "11 hot queries use indexes (SQLite EXPLAIN QUERY PLAN); 32 indexes in the portal DB, 79 in the CRM DB"
+    },
+    {
+      "section": "Database Performance",
+      "item": "DB-3",
+      "title": "Large candidate / job queries",
+      "status": "PASS",
+      "evidence": "5,000+ jobs, 10,000+ candidates, 2,000-applicant jobs: responses capped by page size, totals correct (10010 CRM candidates), applicant lists load candidate names in one query (p95 26 ms / 103 ms)"
+    },
+    {
+      "section": "Database Performance",
+      "item": "DB-4",
+      "title": "Pagination",
+      "status": "PASS",
+      "evidence": "pages don't overlap; oversized page requests (limit=100000) rejected with 422 on 5 list endpoints"
+    },
+    {
+      "section": "Database Performance",
+      "item": "DB-5",
+      "title": "API response time",
+      "status": "PASS",
+      "evidence": "every response carries X-Response-Time and X-Request-ID; portal GET /jobs (5,000+ jobs): median 7 ms / p95 14 ms; portal GET /jobs search: median 7 ms / p95 8 ms; portal GET /jobs/{id}/applications (2,000 applicants): median 18 ms / p95 26 ms; portal GET /admin/users: median 5 ms / p95 8 ms; CRM GET /candidates (10,000+): median 14 ms / p95 17 ms; CRM GET /candidates search: median 23 ms / p95 26 ms; CRM GET /leads (3,000+): median 14 ms / p95 16 ms; CRM GET /jobs/{id} (2,000 applicants): median 88 ms / p95 103 ms; CRM GET /analytics/overview: median 19 ms / p95 22 ms"
+    },
+    {
+      "section": "Database Performance",
+      "item": "DB-6",
+      "title": "Connection pooling / concurrency",
+      "status": "PASS",
+      "evidence": "200 concurrent requests (50 at a time) across both apps: all 200, no 'database is locked'; SQLite in WAL mode with busy timeout; PostgreSQL deployments get a bounded pool (10 + 20 overflow, pre-ping, recycle)"
+    },
+    {
+      "section": "P2",
+      "item": "P2-1",
+      "title": "Error messages",
+      "status": "PASS",
+      "evidence": "validation errors are readable sentences (e.g. \"name: String should have at least 2 characters; email: value is not a \"); not-found: \"Candidate not found\"; unexpected errors return a generic message with a request id instead of a stack trace"
+    },
+    {
+      "section": "P2",
+      "item": "P2-2",
+      "title": "Reports improvements",
+      "status": "PASS",
+      "evidence": "CSV exports for leads/candidates/placements/invoices/incentives with role rules (HR: invoices 403, own incentives only: 2 rows); revenue now from real invoices: invoiced 306,800, collected 165,200, outstanding 141,600, overdue 141,600; monthly trend and placement funnel {'offered': 1, 'joined': 2, 'dropped': 0, 'left_in_guarantee': 1}"
+    },
+    {
+      "section": "P2",
+      "item": "P2-3",
+      "title": "Backup / recovery",
+      "status": "PASS",
+      "evidence": "online backup of the live CRM DB while it was serving traffic (24 tables, 15,219 rows, 857,044 bytes gz), integrity verified, restored copy has the same 10,010 candidates; restore refuses to overwrite without --force and keeps the old DB; nightly cron + pre-deploy backup installed by update.sh"
+    },
+    {
+      "section": "P2",
+      "item": "P2-4",
+      "title": "Mobile UX",
+      "status": "PASS",
+      "evidence": "static review of every page: all 10 tables scroll horizontally on small screens, 42 form grids collapse to one column below 640 px, CRM sidebar becomes a slide-out menu, wide decorative elements are clipped (no sideways scrolling); confirm visually on a phone after deploy"
+    },
+    {
+      "section": "Also fixed",
+      "item": "X-1",
+      "title": "Website contact form actually delivers enquiries (was a fake 'sent')",
+      "status": "PASS",
+      "evidence": "message saved (#1) and emailed to bdm@jobsnexgen.com (delivered); HTML in the message is escaped; bad input -> readable 422; 6th message from one IP in an hour -> 429; admin sees it under Enquiries (5 new) and can mark it handled; candidates can't see enquiries (403)"
+    },
+    {
+      "section": "Also fixed",
+      "item": "X-2",
+      "title": "Newsletter sign-up, weekly job alerts and unsubscribe (was a dead form)",
+      "status": "PASS",
+      "evidence": "sign-up saved and a confirmation email sent (double opt-in); forged link -> 400, real link confirms; weekly new-jobs email ('10 new jobs on JobsNexGen this week') delivered with job links and an unsubscribe link; pressing 'send now' twice doesn't double-send; unsubscribe works and shows in the admin list"
+    }
+  ]
+}

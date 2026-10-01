@@ -3,6 +3,7 @@ Email service using Python's built-in smtplib (no external API keys needed).
 SMTP: mail.jobsnexgen.com  port 465 SSL
 From: bdm@jobsnexgen.com
 """
+import html as _html
 import logging
 import smtplib
 import threading
@@ -31,12 +32,17 @@ _WHITE  = "#F8FAFC"
 
 
 # ── Low-level sender ──────────────────────────────────────────────────────────
-def _send(to_email: str, to_name: str, subject: str, html: str) -> bool:
-    """Send one email via SMTP SSL. Returns True on success."""
+def send_raw(to_email: str, to_name: str, subject: str, html: str) -> tuple[bool, str | None]:
+    """One delivery attempt. Returns (ok, error). Used by the outbox, which retries."""
+    if settings.EMAIL_BACKEND == "console":
+        logger.info(f"[EMAIL:console] '{subject}' → {to_email}")
+        return True, None
+    if settings.EMAIL_BACKEND == "fail":  # used by the QA suite to exercise retries
+        return False, "simulated delivery failure (EMAIL_BACKEND=fail)"
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = f"{FROM_NAME} <{FROM_ADDR}>"
-    msg["To"]      = f"{to_name} <{to_email}>" if to_name else to_email
+    msg["To"]      = f"{_e(to_name)} <{to_email}>" if to_name else to_email
     msg["Reply-To"] = FROM_ADDR
     msg.attach(MIMEText(html, "html", "utf-8"))
     try:
@@ -44,23 +50,27 @@ def _send(to_email: str, to_name: str, subject: str, html: str) -> bool:
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(FROM_ADDR, [to_email], msg.as_string())
         logger.info(f"[EMAIL] Sent '{subject}' → {to_email}")
-        return True
+        return True, None
     except Exception as exc:
         logger.error(f"[EMAIL] Failed to send '{subject}' → {to_email}: {exc}")
-        return False
+        return False, f"{type(exc).__name__}: {exc}"
 
 
-def _send_async(to_email: str, to_name: str, subject: str, html: str) -> None:
-    """Fire-and-forget: send email in a background thread so it never blocks a request."""
-    threading.Thread(
-        target=_send,
-        args=(to_email, to_name, subject, html),
-        daemon=True,
-    ).start()
+def _send_async(to_email: str, to_name: str, subject: str, html: str, category: str = "general") -> None:
+    """Queue the email in the outbox; it is sent in the background and retried on failure."""
+    from app.services.outbox import enqueue_email
+    try:
+        enqueue_email(category, to_email, to_name, subject, html)
+    except Exception:
+        logger.exception(f"[EMAIL] could not queue '{subject}' → {to_email}")
 
 
-# ── Shared HTML wrapper ───────────────────────────────────────────────────────
-def _wrap(body_html: str, cta_url: str = "", cta_label: str = "") -> str:
+def _e(value) -> str:
+    """HTML-escape user-supplied text before it goes into an email body."""
+    return _html.escape(str(value if value is not None else ""))
+
+
+def _wrap(body_html: str, cta_url: str = "", cta_label: str = "", footer_note: str = "") -> str:
     cta_block = ""
     if cta_url and cta_label:
         cta_block = f"""
@@ -108,7 +118,7 @@ def _wrap(body_html: str, cta_url: str = "", cta_label: str = "") -> str:
               · <a href="mailto:support@jobsnexgen.in" style="color:{_BLUE};text-decoration:none">support@jobsnexgen.in</a>
             </p>
             <p style="margin:6px 0 0;color:#334155;font-size:11px">
-              You are receiving this email because an action was taken on your JobsNexGen account.
+              {footer_note or "You are receiving this email because an action was taken on your JobsNexGen account."}
             </p>
           </td>
         </tr>
@@ -120,6 +130,7 @@ def _wrap(body_html: str, cta_url: str = "", cta_label: str = "") -> str:
 
 
 def _stat_box(label: str, value: str, color: str) -> str:
+    value = _e(value)
     return f"""
     <td style="text-align:center;padding:12px 16px;
                background:{_CARD};border-radius:8px;
@@ -134,7 +145,7 @@ def _stat_box(label: str, value: str, color: str) -> str:
 def send_welcome_email(to_email: str, name: str) -> None:
     body = f"""
     <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">Welcome to JobsNexGen! 🎉</h2>
-    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{name}</strong>,</p>
+    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{_e(name)}</strong>,</p>
     <p style="margin:0 0 16px;color:{_MUTED}">
       Your account is ready. Here's what you can do right now:
     </p>
@@ -145,7 +156,7 @@ def send_welcome_email(to_email: str, name: str) -> None:
       <li>Get career advice from our AI assistant</li>
     </ul>"""
     html = _wrap(body, f"{settings.FRONTEND_URL}/jobs", "Browse Jobs →")
-    _send_async(to_email, name, "Welcome to JobsNexGen! 🎉", html)
+    _send_async(to_email, name, "Welcome to JobsNexGen! 🎉", html, category="welcome")
 
 
 def send_application_received_email(
@@ -153,7 +164,7 @@ def send_application_received_email(
 ) -> None:
     body = f"""
     <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">Application Received ✅</h2>
-    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{name}</strong>,</p>
+    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{_e(name)}</strong>,</p>
     <p style="margin:0 0 20px;color:{_MUTED}">
       Great news — your application has been successfully submitted.
       The recruiter will review it shortly.
@@ -169,7 +180,7 @@ def send_application_received_email(
       Track your application status in real-time on your dashboard.
     </p>"""
     html = _wrap(body, f"{settings.FRONTEND_URL}/ats", "Track Application →")
-    _send_async(to_email, name, f"Application received – {job_title}", html)
+    _send_async(to_email, name, f"Application received – {job_title}", html, category="application_received")
 
 
 def send_recruiter_new_application_email(
@@ -183,7 +194,7 @@ def send_recruiter_new_application_email(
     exp_str = f"{years_exp} yr{'s' if (years_exp or 0) != 1 else ''}" if years_exp else "Not specified"
     body = f"""
     <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">New Application Received 📬</h2>
-    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{recruiter_name}</strong>,</p>
+    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{_e(recruiter_name)}</strong>,</p>
     <p style="margin:0 0 20px;color:{_MUTED}">
       A new candidate has applied for your job posting.
     </p>
@@ -197,15 +208,15 @@ def send_recruiter_new_application_email(
     <div style="margin-top:20px;background:{_CARD};border-radius:8px;padding:14px 16px;
                 border:1px solid rgba(255,255,255,.06)">
       <p style="margin:0;color:{_MUTED};font-size:13px">
-        Candidate email: <a href="mailto:{candidate_email}"
-          style="color:{_BLUE};text-decoration:none">{candidate_email}</a>
+        Candidate email: <a href="mailto:{_e(candidate_email)}"
+          style="color:{_BLUE};text-decoration:none">{_e(candidate_email)}</a>
       </p>
     </div>
     <p style="margin:16px 0 0;color:{_MUTED};font-size:13px">
       Review their profile, ATS score, and resume on your dashboard.
     </p>"""
     html = _wrap(body, f"{settings.FRONTEND_URL}/dashboard/recruiter", "View Application →")
-    _send_async(to_email, recruiter_name, f"New applicant for '{job_title}' – {candidate_name}", html)
+    _send_async(to_email, recruiter_name, f"New applicant for '{job_title}' – {candidate_name}", html, category="recruiter_new_application")
 
 
 def send_status_update_email(
@@ -215,20 +226,22 @@ def send_status_update_email(
         "screening": ("Moved to Screening 🔍",  "#F59E0B", "Your profile is being reviewed by the hiring team."),
         "interview": ("Interview Invitation 🎯", _PURPLE,   "Congratulations! You have been shortlisted for an interview. Check your messages for details."),
         "offered":   ("Job Offer Received 🎉",  "#10B981",  "Congratulations! You have received a job offer. Please log in to review and respond."),
+        "hired":     ("You're Hired! 🎉",       "#10B981",  "Congratulations! The employer has confirmed your hiring. They will contact you with joining details."),
+        "withdrawn": ("Application Withdrawn",   "#64748B",  "Your application has been withdrawn."),
         "rejected":  ("Application Update",      "#EF4444",  "Thank you for applying. After careful consideration, the team has decided to move forward with other candidates. We encourage you to keep exploring opportunities on JobsNexGen."),
     }
     label, color, message = status_map.get(
         new_status,
         (f"Status Updated to {new_status.title()}", _BLUE, "Your application status has been updated.")
     )
-    company_line = f" at <strong style='color:{_WHITE}'>{company}</strong>" if company else ""
+    company_line = f" at <strong style='color:{_WHITE}'>{_e(company)}</strong>" if company else ""
     body = f"""
     <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">{label}</h2>
-    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{name}</strong>,</p>
+    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{_e(name)}</strong>,</p>
     <div style="background:{_CARD};border-left:4px solid {color};border-radius:0 8px 8px 0;
                 padding:14px 18px;margin-bottom:20px">
       <p style="margin:0;color:{_MUTED};font-size:13px">
-        Your application for <strong style="color:{_WHITE}">{job_title}</strong>{company_line}
+        Your application for <strong style="color:{_WHITE}">{_e(job_title)}</strong>{company_line}
         has been updated.
       </p>
       <p style="margin:8px 0 0;color:{color};font-weight:700;font-size:15px">
@@ -237,7 +250,7 @@ def send_status_update_email(
     </div>
     <p style="margin:0;color:{_MUTED};font-size:13px">{message}</p>"""
     html = _wrap(body, f"{settings.FRONTEND_URL}/ats", "View Application →")
-    _send_async(to_email, name, f"{label} – {job_title}", html)
+    _send_async(to_email, name, f"{label} – {job_title}", html, category="application_status")
 
 
 def send_message_notification_email(
@@ -259,27 +272,27 @@ def send_message_notification_email(
     preview = content[:300] + ("…" if len(content) > 300 else "")
     body = f"""
     <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">{label}</h2>
-    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{to_name}</strong>,</p>
+    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{_e(to_name)}</strong>,</p>
     <p style="margin:0 0 16px;color:{_MUTED}">
-      You have a new message from <strong style="color:{_WHITE}">{sender_name}</strong>
-      regarding <strong style="color:{_WHITE}">{job_title}</strong>.
+      You have a new message from <strong style="color:{_WHITE}">{_e(sender_name)}</strong>
+      regarding <strong style="color:{_WHITE}">{_e(job_title)}</strong>.
     </p>
     <div style="background:{_CARD};border-left:4px solid {color};border-radius:0 8px 8px 0;
                 padding:16px 18px;margin-bottom:16px">
-      <p style="margin:0;color:{_WHITE};font-size:14px;line-height:1.7;white-space:pre-wrap">{preview}</p>
+      <p style="margin:0;color:{_WHITE};font-size:14px;line-height:1.7;white-space:pre-wrap">{_e(preview)}</p>
     </div>
     <p style="margin:0;color:{_MUTED};font-size:12px">
       Log in to reply and view your full conversation.
     </p>"""
     html = _wrap(body, f"{settings.FRONTEND_URL}/dashboard/candidate", "View Message →")
-    _send_async(to_email, to_name, f"{label} – {job_title}", html)
+    _send_async(to_email, to_name, f"{label} – {job_title}", html, category="application_message")
 
 
 def send_password_reset_email(to_email: str, name: str, reset_token: str) -> None:
     reset_url = f"{settings.FRONTEND_URL}/auth/reset-password?token={reset_token}"
     body = f"""
     <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">Reset Your Password 🔐</h2>
-    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{name}</strong>,</p>
+    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{_e(name)}</strong>,</p>
     <p style="margin:0 0 20px;color:{_MUTED}">
       We received a request to reset the password for your JobsNexGen account.
       Click the button below — this link is valid for <strong style="color:{_WHITE}">1 hour</strong>.
@@ -293,4 +306,91 @@ def send_password_reset_email(to_email: str, name: str, reset_token: str) -> Non
       Your password will not change.
     </p>"""
     html = _wrap(body, reset_url, "Reset Password →")
-    _send_async(to_email, name, "Reset your JobsNexGen password", html)
+    _send_async(to_email, name, "Reset your JobsNexGen password", html, category="password_reset")
+
+
+# ── Contact form & newsletter ─────────────────────────────────────────────────
+
+def _one_line(text: str) -> str:
+    return " ".join(str(text).split())
+
+
+def _salary(lo: int | None, hi: int | None) -> str:
+    """Same format as the website (lib/format.ts)."""
+    def fmt(n: int) -> str:
+        return f"₹{n / 100000:.1f}L" if n >= 100000 else f"₹{n:,}"
+    if lo and hi:
+        return f"{fmt(lo)} - {fmt(hi)}"
+    if lo:
+        return f"{fmt(lo)}+"
+    return f"Up to {fmt(hi)}" if hi else ""
+
+
+def send_contact_notification_email(enquiry_id: int, name: str, email: str, subject: str, message: str) -> None:
+    """Tell the team about a new contact-form enquiry."""
+    reply = f"mailto:{email}?subject=Re: {_one_line(subject)}"
+    body = f"""
+    <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">New website enquiry 📩</h2>
+    <p style="margin:0 0 16px;color:{_MUTED}">Someone filled in the contact form on jobsnexgen.com.</p>
+    <table cellpadding="0" cellspacing="0" style="margin-bottom:16px;font-size:14px">
+      <tr><td style="color:{_MUTED};padding:3px 16px 3px 0">From</td>
+          <td style="color:{_WHITE};font-weight:600">{_e(name)}</td></tr>
+      <tr><td style="color:{_MUTED};padding:3px 16px 3px 0">Email</td>
+          <td><a href="{_e(reply)}" style="color:{_BLUE};text-decoration:none">{_e(email)}</a></td></tr>
+      <tr><td style="color:{_MUTED};padding:3px 16px 3px 0">Subject</td>
+          <td style="color:{_WHITE}">{_e(subject)}</td></tr>
+      <tr><td style="color:{_MUTED};padding:3px 16px 3px 0">Reference</td>
+          <td style="color:{_WHITE}">#{enquiry_id}</td></tr>
+    </table>
+    <div style="background:{_CARD};border-left:4px solid {_BLUE};border-radius:0 8px 8px 0;
+                padding:16px 18px;margin-bottom:16px">
+      <p style="margin:0;color:{_WHITE};font-size:14px;line-height:1.7;white-space:pre-wrap">{_e(message)}</p>
+    </div>
+    <p style="margin:0;color:{_MUTED};font-size:12px">
+      Click the email address to reply. Mark it handled in the admin dashboard → Enquiries.
+    </p>"""
+    html = _wrap(body, f"{settings.FRONTEND_URL}/dashboard/admin", "Open Admin Dashboard →",
+                 footer_note="Sent by the contact form on jobsnexgen.com.")
+    _send_async(settings.CONTACT_INBOX, "JobsNexGen Team", f"New enquiry: {_one_line(subject)[:150]}", html,
+                category="contact_enquiry")
+
+
+def send_newsletter_confirm_email(to_email: str, confirm_url: str, unsubscribe_url: str) -> None:
+    body = f"""
+    <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">Confirm your job alerts ✉️</h2>
+    <p style="margin:0 0 16px;color:{_MUTED}">
+      Thanks for signing up for weekly job alerts from JobsNexGen. Click the button below to confirm
+      your email address. Every Monday we'll send you the newest jobs posted on the site.
+    </p>
+    <p style="margin:0;color:#475569;font-size:12px">
+      Didn't sign up? Just ignore this email and you won't hear from us again.
+    </p>"""
+    html = _wrap(body, confirm_url, "Confirm Subscription →",
+                 footer_note=f'Someone entered this address on jobsnexgen.com. '
+                             f'<a href="{_e(unsubscribe_url)}" style="color:#475569">Unsubscribe</a>')
+    _send_async(to_email, "", "Confirm your JobsNexGen job alerts", html, category="newsletter_confirm")
+
+
+def build_digest_email(jobs: list[dict], unsubscribe_url: str) -> tuple[str, str]:
+    """Weekly new-jobs email. Each job: title, company, location, employment_type, salary_min, salary_max, url."""
+    cards = ""
+    for j in jobs:
+        meta = " · ".join(x for x in [j.get("company"), j.get("location"), j.get("employment_type"),
+                                      _salary(j.get("salary_min"), j.get("salary_max"))] if x)
+        cards += f"""
+    <a href="{_e(j["url"])}" style="display:block;text-decoration:none;background:{_CARD};border-radius:8px;
+       border:1px solid rgba(255,255,255,.06);padding:14px 16px;margin-bottom:10px">
+      <div style="color:{_WHITE};font-size:15px;font-weight:700">{_e(j["title"])}</div>
+      <div style="color:{_MUTED};font-size:12px;margin-top:4px">{_e(meta)}</div>
+    </a>"""
+    count = len(jobs)
+    body = f"""
+    <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">This week's new jobs 🚀</h2>
+    <p style="margin:0 0 18px;color:{_MUTED}">
+      {count} new job{"s" if count != 1 else ""} posted on JobsNexGen in the last 7 days:
+    </p>
+    {cards}"""
+    html = _wrap(body, f"{settings.FRONTEND_URL}/jobs", "See All Jobs →",
+                 footer_note=f'You subscribed to weekly job alerts on jobsnexgen.com. '
+                             f'<a href="{_e(unsubscribe_url)}" style="color:#475569">Unsubscribe</a>')
+    return f"{count} new job{'s' if count != 1 else ''} on JobsNexGen this week", html

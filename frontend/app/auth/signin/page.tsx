@@ -241,6 +241,7 @@ export default function SignInPage() {
           )}
 
           <Tabs defaultValue="login">
+            {/* two tabs side by side: fine on phones */}
             <TabsList className="mb-6 grid w-full grid-cols-2 bg-white/5">
               <TabsTrigger value="login">Sign In</TabsTrigger>
               <TabsTrigger value="register">Register</TabsTrigger>

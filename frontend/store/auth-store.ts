@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AuthSuccess, AuthUser } from "@/lib/auth-storage";
-import { clearAuth, getStoredUser, persistAuth } from "@/lib/auth-storage";
+import { clearAuth, getAccessToken, getStoredUser, persistAuth } from "@/lib/auth-storage";
+import { API_BASE_URL } from "@/lib/constants";
 
 type AuthState = {
   user: AuthUser | null;
@@ -23,6 +24,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ user: getStoredUser(), hydrated: true });
   },
   logout: () => {
+    // End the session on the server too (best effort), so the token stops working everywhere
+    const token = getAccessToken();
+    if (token) {
+      fetch(`${API_BASE_URL}/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+    }
     clearAuth();
     set({ user: null, hydrated: true });
   },

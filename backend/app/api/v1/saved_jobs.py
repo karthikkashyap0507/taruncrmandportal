@@ -24,36 +24,36 @@ class SavedJobResponse(BaseModel):
 
 @router.get("", response_model=list[SavedJobResponse])
 def list_saved_jobs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    saved = (
-        db.query(SavedJob)
+    rows = (
+        db.query(SavedJob, Job)
+        .join(Job, Job.id == SavedJob.job_id)
+        .options(joinedload(Job.company))
         .filter(SavedJob.user_id == user.id)
         .order_by(SavedJob.saved_at.desc())
         .all()
     )
     result = []
-    for s in saved:
-        job = db.query(Job).options(joinedload(Job.company)).filter(Job.id == s.job_id).first()
-        if job:
-            result.append(SavedJobResponse(
-                id=s.id,
-                job_id=s.job_id,
-                saved_at=s.saved_at,
-                job=JobResponse(
-                    id=job.id,
-                    company_id=job.company_id,
-                    recruiter_id=job.recruiter_id,
-                    title=job.title,
-                    description=job.description,
-                    salary_min=job.salary_min,
-                    salary_max=job.salary_max,
-                    skills=job.skills,
-                    experience_level=job.experience_level,
-                    location=job.location,
-                    employment_type=job.employment_type,
-                    status=job.status,
-                    company=CompanyResponse.model_validate(job.company) if job.company else None,
-                ),
-            ))
+    for s, job in rows:
+        result.append(SavedJobResponse(
+            id=s.id,
+            job_id=s.job_id,
+            saved_at=s.saved_at,
+            job=JobResponse(
+                id=job.id,
+                company_id=job.company_id,
+                recruiter_id=job.recruiter_id,
+                title=job.title,
+                description=job.description,
+                salary_min=job.salary_min,
+                salary_max=job.salary_max,
+                skills=job.skills,
+                experience_level=job.experience_level,
+                location=job.location,
+                employment_type=job.employment_type,
+                status=job.status,
+                company=CompanyResponse.model_validate(job.company) if job.company else None,
+            ),
+        ))
     return result
 
 
