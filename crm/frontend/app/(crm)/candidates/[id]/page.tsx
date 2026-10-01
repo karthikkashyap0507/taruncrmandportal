@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { candidatesApi, apiError, fileUrl } from "@/lib/api";
+import { educationLabel } from "@/lib/format";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
@@ -157,6 +158,7 @@ export default function CandidateDetailPage() {
               <InfoRow label="Current Company" value={candidate.current_company} icon={Building2} />
               <InfoRow label="Experience" value={candidate.experience_years != null ? `${candidate.experience_years} yrs` : null} icon={TrendingUp} />
               <InfoRow label="Expected Salary" value={candidate.expected_salary} icon={IndianRupee} />
+              <InfoRow label="Education" value={educationLabel(candidate.education)} icon={Briefcase} />
               <InfoRow label="Notice Period" value={candidate.notice_period} icon={Clock} />
               <InfoRow label="LinkedIn" value={candidate.linkedin_url} icon={Linkedin} />
             </div>

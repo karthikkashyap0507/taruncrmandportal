@@ -3,9 +3,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.auth.deps import require_roles
 from app.core.database import get_db
@@ -55,6 +55,7 @@ class AdminStats(BaseModel):
     total_jobs: int
     published_jobs: int
     total_applications: int
+    pending_jobs: int = 0
     failed_emails: int = 0
     new_enquiries: int = 0
     newsletter_subscribers: int = 0
@@ -74,6 +75,7 @@ def admin_stats(db: Session = Depends(get_db), _: User = Depends(AdminUser)):
         total_jobs=db.query(Job).count(),
         published_jobs=db.query(Job).filter(Job.status == JobStatus.published).count(),
         total_applications=db.query(Application).count(),
+        pending_jobs=db.query(Job).filter(Job.status == JobStatus.pending).count(),
         failed_emails=db.query(EmailOutbox).filter(EmailOutbox.status.in_(["failed", "dead"])).count(),
         new_enquiries=db.query(ContactMessage).filter(ContactMessage.status == "new").count(),
         newsletter_subscribers=db.query(NewsletterSubscriber).filter(
@@ -190,13 +192,64 @@ def delete_company(company_id: int, request: Request, db: Session = Depends(get_
 
 @router.get("/jobs")
 def list_all_jobs(
+    status: Optional[JobStatus] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     _: User = Depends(AdminUser),
 ):
-    jobs = db.query(Job).order_by(Job.id.desc()).offset(skip).limit(limit).all()
-    return [{"id": j.id, "title": j.title, "status": j.status, "company_id": j.company_id} for j in jobs]
+    q = db.query(Job).options(joinedload(Job.company), joinedload(Job.recruiter).joinedload(Recruiter.user))
+    if status:
+        q = q.filter(Job.status == status)
+    jobs = q.order_by(Job.id.desc()).offset(skip).limit(limit).all()
+    return [{
+        "id": j.id, "title": j.title, "status": j.status, "company_id": j.company_id,
+        "company_name": j.company.name if j.company else None,
+        "posted_by": j.recruiter.user.name if j.recruiter and j.recruiter.user else None,
+        "posted_by_email": j.recruiter.user.email if j.recruiter and j.recruiter.user else None,
+        "location": j.location, "locality": j.locality, "education": j.education,
+        "salary_min": j.salary_min, "salary_max": j.salary_max,
+        "salary_period": j.salary_period or ("year" if (j.salary_min or j.salary_max) else None),
+        "employment_type": j.employment_type, "experience_level": j.experience_level,
+        "description": j.description, "review_note": j.review_note, "created_at": j.created_at,
+    } for j in jobs]
+
+
+def _review(db: Session, job_id: int, approve: bool, note: Optional[str], admin: User, request: Request) -> dict:
+    job = db.query(Job).options(joinedload(Job.recruiter).joinedload(Recruiter.user)).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if approve:
+        job.status, job.review_note = JobStatus.published, None
+        job.approved_at, job.approved_by_id = _now(), admin.id
+    else:
+        job.status, job.review_note = JobStatus.rejected, note
+    audit(db, "admin.job_approved" if approve else "admin.job_rejected", actor=admin, entity_type="job",
+          entity_id=job.id, details={"title": job.title, "reason": note} if not approve else {"title": job.title},
+          request=request)
+    db.commit()
+    poster = job.recruiter.user if job.recruiter else None
+    if poster:
+        from app.services.email import send_job_review_email
+        send_job_review_email(poster.email, poster.name, job.id, job.title, approve, note)
+    return {"id": job.id, "status": job.status.value, "review_note": job.review_note}
+
+
+class RejectJobBody(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=1000)
+
+
+@router.post("/jobs/{job_id}/approve")
+def approve_job(job_id: int, request: Request, db: Session = Depends(get_db), admin: User = Depends(AdminUser)):
+    """Publish an employer's job; the poster is emailed."""
+    return _review(db, job_id, True, None, admin, request)
+
+
+@router.post("/jobs/{job_id}/reject")
+def reject_job(job_id: int, body: RejectJobBody, request: Request, db: Session = Depends(get_db),
+               admin: User = Depends(AdminUser)):
+    """Turn down an employer's job with a reason the poster sees; they can edit and resubmit."""
+    return _review(db, job_id, False, body.reason.strip(), admin, request)
 
 
 @router.patch("/jobs/{job_id}/status")
@@ -212,6 +265,8 @@ def update_job_status(
         raise HTTPException(status_code=404, detail="Job not found")
     old = job.status
     job.status = status
+    if status == JobStatus.published and not job.approved_at:
+        job.approved_at, job.approved_by_id = _now(), admin.id
     audit(db, "admin.job_status_changed", actor=admin, entity_type="job", entity_id=job.id,
           details={"from": old.value, "to": status.value}, request=request)
     db.commit()

@@ -34,6 +34,7 @@ class CandidateCreate(BaseModel):
     current_company: Optional[str] = Field(default=None, max_length=255)
     location: Optional[str] = Field(default=None, max_length=255)
     expected_salary: Optional[str] = Field(default=None, max_length=100)
+    education: Optional[str] = Field(default=None, max_length=20)
     notice_period: Optional[str] = Field(default=None, max_length=100)
     linkedin_url: Optional[str] = Field(default=None, max_length=500)
     status: CandidateStatus = CandidateStatus.new
@@ -54,6 +55,7 @@ class CandidateUpdate(BaseModel):
     current_company: Optional[str] = Field(default=None, max_length=255)
     location: Optional[str] = Field(default=None, max_length=255)
     expected_salary: Optional[str] = Field(default=None, max_length=100)
+    education: Optional[str] = Field(default=None, max_length=20)
     notice_period: Optional[str] = Field(default=None, max_length=100)
     linkedin_url: Optional[str] = Field(default=None, max_length=500)
     status: Optional[CandidateStatus] = None
@@ -79,6 +81,7 @@ def _serialize(c: Candidate) -> dict:
         "current_company": c.current_company,
         "location": c.location,
         "expected_salary": c.expected_salary,
+        "education": c.education,
         "notice_period": c.notice_period,
         "linkedin_url": c.linkedin_url,
         # Signed, expiring link (resumes are never publicly reachable)
@@ -297,7 +300,7 @@ async def merge_candidates(keep_id: int, duplicate_id: int, request: Request, db
     await db.execute(update(Interview).where(Interview.candidate_id == dup.id).values(candidate_id=keep.id))
 
     filled = {}
-    for field in ("email", "phone", "current_title", "current_company", "location", "expected_salary",
+    for field in ("email", "phone", "current_title", "current_company", "location", "expected_salary", "education",
                   "notice_period", "linkedin_url", "resume_url", "experience_years"):
         if not getattr(keep, field) and getattr(dup, field):
             setattr(keep, field, getattr(dup, field))

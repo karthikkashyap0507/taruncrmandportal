@@ -20,6 +20,7 @@ import { Separator } from "@/components/ui/separator";
 import { externalJobsApi, jobsApi } from "@/services/api";
 import { useAuthStore } from "@/store/auth-store";
 import type { ExternalJob, Job } from "@/types";
+import { EDUCATION_OPTIONS } from "@/lib/format";
 
 // ─── Filter data ────────────────────────────────────────────────────────────
 const CITIES = [
@@ -76,13 +77,22 @@ const SORT_OPTIONS = [
 
 const SKILL_TAGS = ["Python", "React", "TypeScript", "AI/ML", "AWS", "Node.js", "Java", "Go", "Kubernetes", "SQL"];
 
+// Pay filters work per month, so monthly and yearly salaries compare fairly
 const SALARY_PRESETS = [
-  { label: "3L+", value: 300000 },
-  { label: "6L+", value: 600000 },
-  { label: "10L+", value: 1000000 },
-  { label: "20L+", value: 2000000 },
-  { label: "40L+", value: 4000000 },
+  { label: "₹10k+", value: 10000 },
+  { label: "₹15k+", value: 15000 },
+  { label: "₹20k+", value: 20000 },
+  { label: "₹30k+", value: 30000 },
+  { label: "₹50k+", value: 50000 },
+  { label: "₹1L+", value: 100000 },
 ];
+
+/** Monthly equivalent of a job's salary figure (older jobs without a period are yearly). */
+const perMonth = (amount: number | undefined, job: Job) =>
+  amount ? (job.salary_period === "month" ? amount : amount / 12) : 0;
+
+// A candidate qualifies for jobs that ask for their level or lower
+const EDUCATION_RANK: Record<string, number> = { any: 0, "10th": 1, "12th": 2, iti: 2, diploma: 3, graduate: 4, postgraduate: 5 };
 
 // ─── Collapsible filter section ──────────────────────────────────────────────
 function FilterSection({ title, children, defaultOpen = true }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
@@ -121,6 +131,8 @@ export default function JobsPage() {
   const [employmentTypes, setEmploymentTypes] = useState<string[]>([]);
   const [salaryMin, setSalaryMin] = useState(0);
   const [salaryMax, setSalaryMax] = useState(0);
+  const [locality, setLocality] = useState("");
+  const [education, setEducation] = useState("all");
   const [remoteOnly, setRemoteOnly] = useState(false);
   const [activeSkillTags, setActiveSkillTags] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState("newest");
@@ -137,7 +149,7 @@ export default function JobsPage() {
   const fetchJobs = useCallback(async () => {
     setLoading(true);
     try {
-      const params: any = { limit: 100 };
+      const params: any = { limit: 200 };
       if (query) params.q = query;
       if (activeSkillTags.length) params.q = ((params.q || "") + " " + activeSkillTags.join(" ")).trim();
 
@@ -152,7 +164,7 @@ export default function JobsPage() {
       }
       if (recRes?.status === "fulfilled") setRecommendedJobs(recRes.value?.data || []);
     } catch {
-      try { const r = await jobsApi.list({ limit: 100 }); setAllJobs(r.data); } catch {}
+      try { const r = await jobsApi.list({ limit: 200 }); setAllJobs(r.data); } catch {}
     } finally { setLoading(false); }
   }, [query, activeSkillTags, user?.role]);
 
@@ -169,6 +181,16 @@ export default function JobsPage() {
       } else {
         jobs = jobs.filter(j => j.location?.toLowerCase().includes(city.toLowerCase()));
       }
+    }
+    // Area / locality (also matches the city field, for jobs that put the area there)
+    if (locality.trim()) {
+      const area = locality.trim().toLowerCase();
+      jobs = jobs.filter(j => j.locality?.toLowerCase().includes(area) || j.location?.toLowerCase().includes(area));
+    }
+    // Qualification
+    if (education !== "all") {
+      const mine = EDUCATION_RANK[education] ?? 0;
+      jobs = jobs.filter(j => !j.education || (EDUCATION_RANK[j.education] ?? 0) <= mine);
     }
     // Remote toggle
     if (remoteOnly) jobs = jobs.filter(j => j.location?.toLowerCase().includes("remote"));
@@ -192,30 +214,30 @@ export default function JobsPage() {
       jobs = jobs.filter(j => employmentTypes.includes(j.employment_type || ""));
     }
     // Salary
-    if (salaryMin > 0) jobs = jobs.filter(j => !j.salary_max || (j.salary_max ?? 0) >= salaryMin || (j.salary_min ?? 0) >= salaryMin);
-    if (salaryMax > 0) jobs = jobs.filter(j => !j.salary_min || (j.salary_min ?? 0) <= salaryMax);
+    if (salaryMin > 0) jobs = jobs.filter(j => perMonth(j.salary_max || j.salary_min, j) >= salaryMin);
+    if (salaryMax > 0) jobs = jobs.filter(j => !j.salary_min || perMonth(j.salary_min, j) <= salaryMax);
 
     // Sort
     switch (sortBy) {
-      case "salary_high": jobs.sort((a, b) => ((b.salary_max || b.salary_min || 0) - (a.salary_max || a.salary_min || 0))); break;
-      case "salary_low": jobs.sort((a, b) => ((a.salary_min || a.salary_max || 0) - (b.salary_min || b.salary_max || 0))); break;
+      case "salary_high": jobs.sort((a, b) => perMonth(b.salary_max || b.salary_min, b) - perMonth(a.salary_max || a.salary_min, a)); break;
+      case "salary_low": jobs.sort((a, b) => perMonth(a.salary_min || a.salary_max, a) - perMonth(b.salary_min || b.salary_max, b)); break;
       case "az": jobs.sort((a, b) => a.title.localeCompare(b.title)); break;
       case "za": jobs.sort((a, b) => b.title.localeCompare(a.title)); break;
       case "oldest": jobs.sort((a, b) => a.id - b.id); break;
       default: jobs.sort((a, b) => b.id - a.id); // newest
     }
     return jobs;
-  }, [allJobs, city, remoteOnly, category, experience, employmentTypes, salaryMin, salaryMax, sortBy]);
+  }, [allJobs, city, locality, education, remoteOnly, category, experience, employmentTypes, salaryMin, salaryMax, sortBy]);
 
   // ── Active filter count ────────────────────────────────────────────────────
   const activeFilterCount = [
-    city !== "All Cities", category !== "all", experience !== "all",
+    city !== "All Cities", category !== "all", experience !== "all", locality.trim() !== "", education !== "all",
     employmentTypes.length > 0, salaryMin > 0, salaryMax > 0,
     remoteOnly, activeSkillTags.length > 0,
   ].filter(Boolean).length;
 
   const clearFilters = () => {
-    setCity("All Cities"); setCategory("all"); setExperience("all");
+    setCity("All Cities"); setCategory("all"); setExperience("all"); setLocality(""); setEducation("all");
     setEmploymentTypes([]); setSalaryMin(0); setSalaryMax(0);
     setRemoteOnly(false); setActiveSkillTags([]); setSortBy("newest");
   };
@@ -262,6 +284,29 @@ export default function JobsPage() {
         </div>
       </FilterSection>
 
+      {/* Area / locality */}
+      <FilterSection title="Area / Locality">
+        <Input placeholder="e.g. JP Nagar, Whitefield" value={locality}
+          onChange={e => setLocality(e.target.value)}
+          className="border-white/10 bg-white/5 text-sm text-white h-9" />
+      </FilterSection>
+
+      {/* Qualification */}
+      <FilterSection title="My Qualification">
+        <Select value={education} onValueChange={(v) => setEducation(v ?? "all")}>
+          <SelectTrigger className="border-white/10 bg-white/5 text-sm h-9">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Show all jobs</SelectItem>
+            {EDUCATION_OPTIONS.filter(o => o.value !== "any").map(o => (
+              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="mt-1.5 text-[11px] text-[#64748B]">Shows jobs open to your qualification level.</p>
+      </FilterSection>
+
       {/* Job Category / Role */}
       <FilterSection title="Job Category">
         <Select value={category} onValueChange={(v) => setCategory(v ?? "")}>
@@ -302,7 +347,7 @@ export default function JobsPage() {
       </FilterSection>
 
       {/* Salary Range */}
-      <FilterSection title="Salary Range (₹/year)">
+      <FilterSection title="Salary (₹ per month)">
         <div className="space-y-3">
           <div className="flex flex-wrap gap-1.5">
             {SALARY_PRESETS.map(p => (
@@ -318,13 +363,13 @@ export default function JobsPage() {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <p className="mb-1 text-[10px] text-[#64748B]">Min</p>
-              <Input type="number" placeholder="e.g. 500000" value={salaryMin || ""}
+              <Input type="number" placeholder="e.g. 15000" value={salaryMin || ""}
                 onChange={e => setSalaryMin(parseInt(e.target.value) || 0)}
                 className="border-white/10 bg-white/5 text-xs text-white h-8" />
             </div>
             <div>
               <p className="mb-1 text-[10px] text-[#64748B]">Max</p>
-              <Input type="number" placeholder="e.g. 5000000" value={salaryMax || ""}
+              <Input type="number" placeholder="e.g. 50000" value={salaryMax || ""}
                 onChange={e => setSalaryMax(parseInt(e.target.value) || 0)}
                 className="border-white/10 bg-white/5 text-xs text-white h-8" />
             </div>
@@ -481,8 +526,10 @@ export default function JobsPage() {
                 {category !== "all" && <FilterChip label={`Role: ${CATEGORIES.find(c => c.value === category)?.label}`} onRemove={() => setCategory("all")} />}
                 {experience !== "all" && <FilterChip label={`Exp: ${EXPERIENCE_OPTIONS.find(e => e.value === experience)?.label}`} onRemove={() => setExperience("all")} />}
                 {employmentTypes.map(t => <FilterChip key={t} label={EMPLOYMENT_TYPES.find(x => x.value === t)?.label || t} onRemove={() => toggleEmploymentType(t)} />)}
-                {salaryMin > 0 && <FilterChip label={`Min ₹${(salaryMin/100000).toFixed(0)}L`} onRemove={() => setSalaryMin(0)} />}
-                {salaryMax > 0 && <FilterChip label={`Max ₹${(salaryMax/100000).toFixed(0)}L`} onRemove={() => setSalaryMax(0)} />}
+                {locality.trim() && <FilterChip label={`Area: ${locality.trim()}`} onRemove={() => setLocality("")} />}
+                {education !== "all" && <FilterChip label={`Qualification: ${EDUCATION_OPTIONS.find(o => o.value === education)?.label}`} onRemove={() => setEducation("all")} />}
+                {salaryMin > 0 && <FilterChip label={`Min ₹${salaryMin.toLocaleString("en-IN")}/month`} onRemove={() => setSalaryMin(0)} />}
+                {salaryMax > 0 && <FilterChip label={`Max ₹${salaryMax.toLocaleString("en-IN")}/month`} onRemove={() => setSalaryMax(0)} />}
                 {remoteOnly && <FilterChip label="Remote Only" onRemove={() => setRemoteOnly(false)} />}
                 {activeSkillTags.map(s => <FilterChip key={s} label={s} onRemove={() => toggleSkill(s)} />)}
               </div>

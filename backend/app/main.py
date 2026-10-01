@@ -118,6 +118,16 @@ def _migrate_legacy_data() -> None:
                 {"new": RESUME_PREFIX},
             )
         conn.execute(text("UPDATE jobs SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+        conn.execute(text("UPDATE jobs SET updated_at = created_at WHERE updated_at IS NULL"))
+        conn.execute(text("UPDATE applications SET updated_at = COALESCE(status_changed_at, applied_at) "
+                          "WHERE updated_at IS NULL"))
+        # Jobs that were already live before the approval step existed count as approved
+        conn.execute(text("UPDATE jobs SET approved_at = created_at "
+                          "WHERE approved_at IS NULL AND status IN ('published', 'closed')"))
+        # Older jobs didn't say whether the salary was monthly or yearly; nobody pays under 1 lakh a year
+        conn.execute(text("UPDATE jobs SET salary_period = CASE WHEN COALESCE(salary_max, salary_min) < 100000 "
+                          "THEN 'month' ELSE 'year' END "
+                          "WHERE salary_period IS NULL AND COALESCE(salary_max, salary_min) IS NOT NULL"))
     if moved:
         logger.info("moved %s resume(s) to private storage", moved)
 

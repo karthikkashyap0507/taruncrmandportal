@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { jobsApi, uploadApi } from "@/services/api";
+import { EDUCATION_OPTIONS } from "@/lib/format";
 import type { ApplicationCreate, Job } from "@/types";
 
 interface ApplyDialogProps {
@@ -27,6 +28,9 @@ export function ApplyDialog({ job, isOpen, onClose, onSuccess, initialName = "",
     years_experience: undefined,
     cover_letter: "",
     resume_url: "",
+    education: undefined,
+    expected_salary: undefined,
+    current_location: "",
   });
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -69,6 +73,9 @@ export function ApplyDialog({ job, isOpen, onClose, onSuccess, initialName = "",
         years_experience: form.years_experience ? Number(form.years_experience) : undefined,
         cover_letter: form.cover_letter,
         resume_url: resumeUrl,
+        education: form.education || undefined,
+        expected_salary: form.expected_salary || undefined,
+        current_location: form.current_location?.trim() || undefined,
       };
 
       await jobsApi.apply(job.id, payload);
@@ -132,17 +139,51 @@ export function ApplyDialog({ job, isOpen, onClose, onSuccess, initialName = "",
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-[#94A3B8] text-xs">Years of Experience</Label>
-            <Input
-              type="number"
-              min={0}
-              max={50}
-              value={form.years_experience ?? ""}
-              onChange={(e) => setForm({ ...form, years_experience: parseInt(e.target.value) || undefined })}
-              placeholder="e.g. 3"
-              className="border-white/10 bg-white/5 text-white w-32"
-            />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-[#94A3B8] text-xs">Years of Experience</Label>
+              <Input
+                type="number"
+                min={0}
+                max={50}
+                value={form.years_experience ?? ""}
+                onChange={(e) => setForm({ ...form, years_experience: parseInt(e.target.value) || undefined })}
+                placeholder="e.g. 3"
+                className="border-white/10 bg-white/5 text-white"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="apply-education" className="text-[#94A3B8] text-xs">Highest Qualification</Label>
+              <select
+                id="apply-education"
+                value={form.education ?? ""}
+                onChange={(e) => setForm({ ...form, education: (e.target.value || undefined) as ApplicationCreate["education"] })}
+                className="h-9 w-full rounded-md border border-white/10 bg-[#0F172A] px-3 text-sm text-white"
+              >
+                <option value="">Select</option>
+                {EDUCATION_OPTIONS.filter(o => o.value !== "any").map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[#94A3B8] text-xs">Expected Salary (₹ per month)</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.expected_salary ?? ""}
+                onChange={(e) => setForm({ ...form, expected_salary: parseInt(e.target.value) || undefined })}
+                placeholder="e.g. 20000"
+                className="border-white/10 bg-white/5 text-white"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[#94A3B8] text-xs">Current Location</Label>
+              <Input
+                value={form.current_location ?? ""}
+                onChange={(e) => setForm({ ...form, current_location: e.target.value })}
+                placeholder="e.g. JP Nagar, Bengaluru"
+                className="border-white/10 bg-white/5 text-white"
+              />
+            </div>
           </div>
 
           {/* Cover Letter */}

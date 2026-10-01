@@ -43,6 +43,9 @@ main() {
   npm ci --no-audit --no-fund
   NEXT_PUBLIC_CRM_API_URL=https://crm.jobsnexgen.com npm run build
 
+  echo "==> Production settings"
+  bash "$repo/deploy/gcp/configure.sh"
+
   echo "==> Restarting apps"
   pm2 startOrReload "$ecosystem" --update-env
   pm2 save

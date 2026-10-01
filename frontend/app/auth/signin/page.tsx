@@ -367,7 +367,7 @@ export default function SignInPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="candidate">Candidate (job seeker)</SelectItem>
-                      <SelectItem value="recruiter">Recruiter</SelectItem>
+                      <SelectItem value="recruiter">Recruiter / Freelancer</SelectItem>
                       <SelectItem value="company_admin">Company admin</SelectItem>
                     </SelectContent>
                   </Select>

@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # Contact-form enquiries are emailed here (a mailbox the SMTP account can deliver to)
     CONTACT_INBOX: str = "bdm@jobsnexgen.com"
 
+    # Shared secret the CRM sends to read jobs/applications (empty = feed switched off)
+    INTEGRATION_KEY: str = ""
+
     # Login protection
     LOGIN_MAX_FAILURES: int = 5
     LOGIN_LOCKOUT_MINUTES: int = 15

@@ -1,5 +1,7 @@
 export type UserRole = "candidate" | "recruiter" | "company_admin" | "platform_admin";
-export type JobStatus = "draft" | "published" | "closed";
+export type JobStatus = "draft" | "pending" | "published" | "rejected" | "closed";
+export type EducationLevel = "any" | "10th" | "12th" | "iti" | "diploma" | "graduate" | "postgraduate";
+export type SalaryPeriod = "month" | "year";
 export type ApplicationStatus = "applied" | "screening" | "interview" | "offered" | "hired" | "rejected" | "withdrawn";
 export type EmploymentType = "full_time" | "part_time" | "contract" | "internship" | "remote";
 
@@ -55,8 +57,13 @@ export interface Job {
   skills: string[];
   experience_level?: string;
   location?: string;
+  locality?: string;
+  education?: EducationLevel;
+  salary_period?: SalaryPeriod;
   employment_type?: string;
   status: JobStatus;
+  review_note?: string | null;
+  created_at?: string;
   company?: Company;
 }
 
@@ -68,6 +75,9 @@ export interface JobCreate {
   skills?: string[];
   experience_level?: string;
   location?: string;
+  locality?: string;
+  education?: EducationLevel;
+  salary_period?: SalaryPeriod;
   employment_type?: string;
   status?: JobStatus;
 }
@@ -80,6 +90,9 @@ export interface JobUpdate {
   skills?: string[];
   experience_level?: string;
   location?: string;
+  locality?: string;
+  education?: EducationLevel;
+  salary_period?: SalaryPeriod;
   employment_type?: string;
   status?: JobStatus;
 }
@@ -105,6 +118,9 @@ export interface Application {
   years_experience?: number;
   cover_letter?: string;
   resume_url?: string;
+  education?: EducationLevel | null;
+  expected_salary?: number | null;
+  current_location?: string | null;
   candidate_info?: CandidateInfo;
   job?: Job;
 }
@@ -115,6 +131,9 @@ export interface ApplicationCreate {
   years_experience?: number;
   cover_letter?: string;
   resume_url?: string;
+  education?: EducationLevel;
+  expected_salary?: number;
+  current_location?: string;
 }
 
 export interface ApplicationUpdate {

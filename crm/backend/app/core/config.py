@@ -33,9 +33,12 @@ class Settings(BaseSettings):
     # JobsNexGen Portal Integration
     PORTAL_API_URL: str = "http://localhost:8000/api/v1"
     PORTAL_WEBHOOK_SECRET: str = "portal-webhook-secret-change-me"
-    # Portal recruiter credentials used by the CRM to pull applications/candidates.
-    # Leave blank to sync public jobs only (no auth required for that).
+    # Portal recruiter credentials (only used by the old manual sync; kept for compatibility).
     PORTAL_RECRUITER_EMAIL: str = ""
+    # Shared secret for the portal's private CRM feed (same value as the portal's INTEGRATION_KEY).
+    # Empty = automatic sync is off.
+    PORTAL_INTEGRATION_KEY: str = ""
+    PORTAL_SYNC_INTERVAL_SECONDS: int = 120
     PORTAL_RECRUITER_PASSWORD: str = ""
 
     # Frontend

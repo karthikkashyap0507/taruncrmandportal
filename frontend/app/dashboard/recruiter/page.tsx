@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BarChart2, Briefcase, CheckCircle, ChevronDown, ChevronUp,
-  Download, Edit, Eye, LogOut, Mail, MessageSquare, Phone,
+  Download, Edit, Eye, GraduationCap, IndianRupee, LogOut, Mail, MapPin, MessageSquare, Phone,
   Plus, RefreshCw, Send, Sparkles, Trash2, TrendingUp, User, Users, XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,9 +17,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { dashboardPathForRole } from "@/lib/dashboard-path";
+import { EDUCATION_OPTIONS, educationLabel, formatPlace, formatSalary } from "@/lib/format";
 import { useAuthStore } from "@/store/auth-store";
 import { jobsApi, messagesApi, apiError, fileUrl } from "@/services/api";
-import type { Application, ApplicationStatus, AppMessage, ATSResult, Job, JobCreate, JobUpdate, MessageType } from "@/types";
+import type { Application, ApplicationStatus, AppMessage, ATSResult, Job, JobCreate, JobStatus, JobUpdate, MessageType } from "@/types";
+
+// ─── Job status badges ────────────────────────────────────────────────────────
+const JOB_STATUS: Record<JobStatus, { label: string; cls: string }> = {
+  published: { label: "Live",              cls: "bg-green-500/20 text-green-400" },
+  pending:   { label: "Awaiting approval", cls: "bg-blue-500/20 text-blue-300" },
+  draft:     { label: "Draft",             cls: "bg-yellow-500/20 text-yellow-400" },
+  rejected:  { label: "Changes needed",    cls: "bg-red-500/20 text-red-400" },
+  closed:    { label: "Closed",            cls: "bg-slate-500/20 text-slate-300" },
+};
+
+const EMPTY_JOB: JobCreate = { title: "", description: "", skills: [], status: "published", salary_period: "month" };
 
 // ─── Status config ────────────────────────────────────────────────────────────
 const STATUS_CONFIG: Record<ApplicationStatus, { label: string; color: string; bg: string }> = {
@@ -89,7 +101,7 @@ export default function RecruiterDashboardPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
-  const [createForm, setCreateForm] = useState<JobCreate>({ title: "", description: "", skills: [], status: "published" });
+  const [createForm, setCreateForm] = useState<JobCreate>(EMPTY_JOB);
   const [editForm, setEditForm] = useState<JobUpdate>({});
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("jobs");
@@ -106,7 +118,7 @@ export default function RecruiterDashboardPage() {
   useEffect(() => {
     if (!hydrated) return;
     if (!user) { router.replace("/auth/signin"); return; }
-    if (user.role !== "recruiter" && user.role !== "company_admin") {
+    if (user.role !== "recruiter" && user.role !== "company_admin" && user.role !== "platform_admin") {
       router.replace(dashboardPathForRole(user.role)); return;
     }
     loadJobs();
@@ -167,10 +179,13 @@ export default function RecruiterDashboardPage() {
 
   const handleCreateJob = async () => {
     try {
-      await jobsApi.create(createForm);
+      const res = await jobsApi.create(createForm);
       setIsCreateOpen(false);
-      setCreateForm({ title: "", description: "", skills: [], status: "published" });
+      setCreateForm(EMPTY_JOB);
       loadJobs();
+      if (res.data.status === "pending") {
+        alert("Job submitted. It goes live as soon as a JobsNexGen admin approves it, and we'll email you when that happens.");
+      }
     } catch (e) {
       alert(apiError(e, "Could not create the job"));
     }
@@ -179,9 +194,12 @@ export default function RecruiterDashboardPage() {
   const handleEditJob = async () => {
     if (!editingJob) return;
     try {
-      await jobsApi.update(editingJob.id, editForm);
+      const res = await jobsApi.update(editingJob.id, editForm);
       setIsEditOpen(false);
       loadJobs();
+      if (res.data.status === "pending" && editingJob.status !== "pending") {
+        alert("Saved and sent for approval. It goes live once a JobsNexGen admin approves it.");
+      }
     } catch (e) {
       alert(apiError(e, "Could not save the job"));
     }
@@ -327,15 +345,23 @@ export default function RecruiterDashboardPage() {
                         <div>
                           <CardTitle className="text-white text-lg">{job.title}</CardTitle>
                           <CardDescription className="text-[#94A3B8]">
-                            {job.location || "Remote"} • {job.employment_type?.replace("_"," ") || "Full Time"}
+                            {formatPlace(job.location, job.locality) || "Location not set"} • {job.employment_type?.replace("_"," ") || "Full Time"}
                           </CardDescription>
                         </div>
-                        <Badge className={job.status === "published" ? "bg-green-500/20 text-green-400" : job.status === "draft" ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}>
-                          {job.status}
+                        <Badge className={(JOB_STATUS[job.status] || JOB_STATUS.draft).cls}>
+                          {(JOB_STATUS[job.status] || JOB_STATUS.draft).label}
                         </Badge>
                       </div>
                     </CardHeader>
                     <CardContent>
+                      {job.status === "rejected" && job.review_note && (
+                        <p className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                          Admin: {job.review_note} <span className="text-[#94A3B8]">Edit the job to send it for review again.</span>
+                        </p>
+                      )}
+                      {job.status === "pending" && (
+                        <p className="mb-3 text-xs text-blue-300">Hidden from candidates until a JobsNexGen admin approves it.</p>
+                      )}
                       <p className="text-[#94A3B8] text-sm line-clamp-2 mb-3">{job.description}</p>
                       <div className="flex flex-wrap gap-1">
                         {job.skills?.slice(0,3).map((s,i) => (
@@ -346,7 +372,7 @@ export default function RecruiterDashboardPage() {
                     <CardFooter className="flex gap-2">
                       <Button variant="outline" size="sm" className="border-white/10 flex-1" onClick={() => {
                         setEditingJob(job);
-                        setEditForm({ title: job.title, description: job.description, salary_min: job.salary_min, salary_max: job.salary_max, skills: job.skills, experience_level: job.experience_level, location: job.location, employment_type: job.employment_type, status: job.status });
+                        setEditForm({ title: job.title, description: job.description, salary_min: job.salary_min, salary_max: job.salary_max, salary_period: job.salary_period || "month", skills: job.skills, experience_level: job.experience_level, location: job.location, locality: job.locality, education: job.education, employment_type: job.employment_type, status: job.status });
                         setIsEditOpen(true);
                       }}>
                         <Edit className="mr-1 h-3 w-3" /> Edit
@@ -477,6 +503,24 @@ export default function RecruiterDashboardPage() {
                           <div className="flex items-center gap-2 text-[#94A3B8]">
                             <Briefcase className="h-4 w-4 text-[#06B6D4]" />
                             <span>{selectedApp.years_experience} years experience</span>
+                          </div>
+                        )}
+                        {selectedApp.education && (
+                          <div className="flex items-center gap-2 text-[#94A3B8]">
+                            <GraduationCap className="h-4 w-4 text-[#10B981]" />
+                            <span>{educationLabel(selectedApp.education)}</span>
+                          </div>
+                        )}
+                        {selectedApp.expected_salary != null && (
+                          <div className="flex items-center gap-2 text-[#94A3B8]">
+                            <IndianRupee className="h-4 w-4 text-[#F59E0B]" />
+                            <span>Expects ₹{selectedApp.expected_salary.toLocaleString("en-IN")}/month</span>
+                          </div>
+                        )}
+                        {selectedApp.current_location && (
+                          <div className="flex items-center gap-2 text-[#94A3B8]">
+                            <MapPin className="h-4 w-4 text-[#EF4444]" />
+                            <span>Lives in {selectedApp.current_location}</span>
                           </div>
                         )}
                         <div className="flex items-center gap-2 text-[#94A3B8]">
@@ -1104,6 +1148,9 @@ If you are excited about this opportunity and meet the qualifications above, we 
 // ─── Job form dialog ──────────────────────────────────────────────────────────
 function JobFormDialog({ title, form, setForm, onSubmit, onCancel }: any) {
   const [generating, setGenerating] = useState(false);
+  const isAdmin = useAuthStore(st => st.user?.role === "platform_admin");
+  const set = (key: string, value: unknown) => setForm((p: any) => ({ ...p, [key]: value }));
+  const inputCls = "bg-white/5 border-white/10 text-white";
 
   const handleGenerateDescription = () => {
     if (!form.title?.trim()) {
@@ -1119,24 +1166,56 @@ function JobFormDialog({ title, form, setForm, onSubmit, onCancel }: any) {
     }, 800);
   };
 
+  const submit = () => {
+    if (!form.title?.trim()) { alert("Please enter a job title."); return; }
+    if (!form.location?.trim()) { alert("Please enter the city where the job is based."); return; }
+    if (!form.education) { alert("Please choose the minimum qualification (or 'Any qualification')."); return; }
+    onSubmit();
+  };
+
   return (
-    <DialogContent className="sm:max-w-[600px] bg-[#0F172A] border border-white/10 max-h-[90vh] overflow-y-auto">
+    <DialogContent className="sm:max-w-[640px] bg-[#0F172A] border border-white/10 max-h-[90vh] overflow-y-auto">
       <DialogHeader>
         <DialogTitle className="text-white">{title}</DialogTitle>
-        <DialogDescription className="text-[#94A3B8]">Fill in the job details below.</DialogDescription>
+        <DialogDescription className="text-[#94A3B8]">
+          {isAdmin ? "Fill in the job details below. Jobs you post go live straight away."
+                   : "Fill in the job details below. New jobs go live once a JobsNexGen admin approves them."}
+        </DialogDescription>
       </DialogHeader>
       <div className="grid gap-4 py-4">
-        {[
-          { id: "title", label: "Job Title", placeholder: "e.g. Senior React Developer" },
-          { id: "location", label: "Location", placeholder: "Bengaluru / Remote" },
-          { id: "experience_level", label: "Experience Level", placeholder: "e.g. 3-5 years, Senior, Junior" },
-        ].map(({ id, label, placeholder }) => (
-          <div key={id} className="grid gap-2">
-            <Label className="text-white text-sm">{label}</Label>
-            <Input value={form[id] || ""} onChange={e => setForm((p: any) => ({ ...p, [id]: e.target.value }))}
-              placeholder={placeholder} className="bg-white/5 border-white/10 text-white" />
+        <div className="grid gap-2">
+          <Label className="text-white text-sm">Job Title *</Label>
+          <Input value={form.title || ""} onChange={e => set("title", e.target.value)}
+            placeholder="e.g. Delivery Executive, Senior React Developer" className={inputCls} />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid gap-2">
+            <Label className="text-white text-sm">City *</Label>
+            <Input value={form.location || ""} onChange={e => set("location", e.target.value)}
+              placeholder="e.g. Bengaluru, or Remote" className={inputCls} />
           </div>
-        ))}
+          <div className="grid gap-2">
+            <Label className="text-white text-sm">Locality / Area</Label>
+            <Input value={form.locality || ""} onChange={e => set("locality", e.target.value)}
+              placeholder="e.g. JP Nagar" className={inputCls} />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid gap-2">
+            <Label className="text-white text-sm">Minimum Education *</Label>
+            <Select value={form.education || ""} onValueChange={v => set("education", v)}>
+              <SelectTrigger className={inputCls}><SelectValue placeholder="Select qualification" /></SelectTrigger>
+              <SelectContent className="bg-[#0F172A] border-white/10">
+                {EDUCATION_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label className="text-white text-sm">Experience Level</Label>
+            <Input value={form.experience_level || ""} onChange={e => set("experience_level", e.target.value)}
+              placeholder="e.g. Fresher, 1-3 years" className={inputCls} />
+          </div>
+        </div>
         <div className="grid gap-2">
           <div className="flex items-center justify-between">
             <Label className="text-white text-sm">Description</Label>
@@ -1153,30 +1232,37 @@ function JobFormDialog({ title, form, setForm, onSubmit, onCancel }: any) {
               )}
             </button>
           </div>
-          <Textarea value={form.description || ""} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))}
+          <Textarea value={form.description || ""} onChange={e => set("description", e.target.value)}
             placeholder="Describe the role, responsibilities, and requirements… or click ✦ Write with AI above."
             className="bg-white/5 border-white/10 text-white min-h-[160px]" />
           {form.description && (
             <p className="text-[10px] text-[#475569]">AI-generated — review and edit as needed before saving.</p>
           )}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="grid gap-2">
-            <Label className="text-white text-sm">Salary Min (₹)</Label>
-            <Input type="number" value={form.salary_min || ""} onChange={e => setForm((p: any) => ({ ...p, salary_min: parseInt(e.target.value) || undefined }))}
-              className="bg-white/5 border-white/10 text-white" />
+        <div className="grid gap-2">
+          <Label className="text-white text-sm">Salary offered (₹)</Label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Input type="number" min={0} placeholder="Minimum" value={form.salary_min ?? ""}
+              onChange={e => set("salary_min", e.target.value === "" ? undefined : parseInt(e.target.value))} className={inputCls} />
+            <Input type="number" min={0} placeholder="Maximum" value={form.salary_max ?? ""}
+              onChange={e => set("salary_max", e.target.value === "" ? undefined : parseInt(e.target.value))} className={inputCls} />
+            <Select value={form.salary_period || "month"} onValueChange={v => set("salary_period", v)}>
+              <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+              <SelectContent className="bg-[#0F172A] border-white/10">
+                <SelectItem value="month">per month</SelectItem>
+                <SelectItem value="year">per year</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div className="grid gap-2">
-            <Label className="text-white text-sm">Salary Max (₹)</Label>
-            <Input type="number" value={form.salary_max || ""} onChange={e => setForm((p: any) => ({ ...p, salary_max: parseInt(e.target.value) || undefined }))}
-              className="bg-white/5 border-white/10 text-white" />
-          </div>
+          {(form.salary_min || form.salary_max) && (
+            <p className="text-xs text-[#64748B]">Shown to candidates as {formatSalary(form.salary_min, form.salary_max, form.salary_period || "month")}</p>
+          )}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="grid gap-2">
             <Label className="text-white text-sm">Employment Type</Label>
-            <Select value={form.employment_type || ""} onValueChange={v => setForm((p: any) => ({ ...p, employment_type: v }))}>
-              <SelectTrigger className="bg-white/5 border-white/10 text-white"><SelectValue placeholder="Select" /></SelectTrigger>
+            <Select value={form.employment_type || ""} onValueChange={v => set("employment_type", v)}>
+              <SelectTrigger className={inputCls}><SelectValue placeholder="Select" /></SelectTrigger>
               <SelectContent className="bg-[#0F172A] border-white/10">
                 {["full_time","part_time","contract","internship","remote"].map(t => (
                   <SelectItem key={t} value={t}>{t.replace("_"," ")}</SelectItem>
@@ -1186,11 +1272,12 @@ function JobFormDialog({ title, form, setForm, onSubmit, onCancel }: any) {
           </div>
           <div className="grid gap-2">
             <Label className="text-white text-sm">Status</Label>
-            <Select value={form.status || "published"} onValueChange={v => setForm((p: any) => ({ ...p, status: v }))}>
-              <SelectTrigger className="bg-white/5 border-white/10 text-white"><SelectValue /></SelectTrigger>
+            <Select value={form.status === "pending" || form.status === "rejected" ? "published" : (form.status || "published")}
+              onValueChange={v => set("status", v)}>
+              <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
               <SelectContent className="bg-[#0F172A] border-white/10">
-                <SelectItem value="draft">Draft</SelectItem>
-                <SelectItem value="published">Published</SelectItem>
+                <SelectItem value="draft">Draft (only you can see it)</SelectItem>
+                <SelectItem value="published">{isAdmin ? "Published" : "Publish (after approval)"}</SelectItem>
                 <SelectItem value="closed">Closed</SelectItem>
               </SelectContent>
             </Select>
@@ -1198,12 +1285,12 @@ function JobFormDialog({ title, form, setForm, onSubmit, onCancel }: any) {
         </div>
         <div className="grid gap-2">
           <Label className="text-white text-sm">Skills</Label>
-          <SkillsInput value={form.skills || []} onChange={skills => setForm((p: any) => ({ ...p, skills }))} />
+          <SkillsInput value={form.skills || []} onChange={skills => set("skills", skills)} />
         </div>
       </div>
       <DialogFooter>
         <Button variant="outline" className="border-white/10 text-white" onClick={onCancel}>Cancel</Button>
-        <Button onClick={onSubmit} className="bg-gradient-to-r from-[#8B5CF6] to-[#06B6D4]">Save</Button>
+        <Button onClick={submit} className="bg-gradient-to-r from-[#8B5CF6] to-[#06B6D4]">Save</Button>
       </DialogFooter>
     </DialogContent>
   );

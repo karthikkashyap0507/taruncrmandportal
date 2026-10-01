@@ -186,7 +186,9 @@ export const adminApi = {
   unlockUser: (id: number) => api.post(`/admin/users/${id}/unlock`),
   listCompanies: (params?: { skip?: number; limit?: number }) => api.get("/admin/companies", { params }),
   deleteCompany: (id: number) => api.delete(`/admin/companies/${id}`),
-  listJobs: (params?: { skip?: number; limit?: number }) => api.get("/admin/jobs", { params }),
+  listJobs: (params?: { status?: string; skip?: number; limit?: number }) => api.get("/admin/jobs", { params }),
+  approveJob: (id: number) => api.post(`/admin/jobs/${id}/approve`),
+  rejectJob: (id: number, reason: string) => api.post(`/admin/jobs/${id}/reject`, { reason }),
   updateJobStatus: (id: number, status: string) =>
     api.patch(`/admin/jobs/${id}/status`, null, { params: { status } }),
   auditLogs: (params?: { action?: string; skip?: number; limit?: number }) => api.get("/admin/audit-logs", { params }),

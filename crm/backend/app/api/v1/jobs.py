@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Literal, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
@@ -25,6 +25,9 @@ class JobCreate(BaseModel):
     company_id: Optional[int] = None
     client_name: Optional[str] = Field(default=None, max_length=255)
     location: Optional[str] = Field(default=None, max_length=255)
+    locality: Optional[str] = Field(default=None, max_length=120)
+    education: Optional[Literal["any", "10th", "12th", "iti", "diploma", "graduate", "postgraduate"]] = None
+    salary_period: Optional[Literal["month", "year"]] = None
     job_type: Optional[str] = Field(default="full-time", max_length=50)
     experience_min: Optional[float] = Field(default=None, ge=0, le=60)
     experience_max: Optional[float] = Field(default=None, ge=0, le=60)
@@ -52,6 +55,9 @@ class JobUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=2, max_length=255)
     client_name: Optional[str] = Field(default=None, max_length=255)
     location: Optional[str] = Field(default=None, max_length=255)
+    locality: Optional[str] = Field(default=None, max_length=120)
+    education: Optional[Literal["any", "10th", "12th", "iti", "diploma", "graduate", "postgraduate"]] = None
+    salary_period: Optional[Literal["month", "year"]] = None
     job_type: Optional[str] = Field(default=None, max_length=50)
     experience_min: Optional[float] = Field(default=None, ge=0, le=60)
     experience_max: Optional[float] = Field(default=None, ge=0, le=60)
@@ -89,17 +95,23 @@ def _serialize_job(j: CRMJob) -> dict:
         "company_id": j.company_id,
         "client_name": j.client_name,
         "location": j.location,
+        "locality": j.locality,
+        "education": j.education,
         "job_type": j.job_type,
         "experience_min": j.experience_min,
         "experience_max": j.experience_max,
         "salary_min": j.salary_min,
         "salary_max": j.salary_max,
+        "salary_period": j.salary_period,
         "skills_required": j.skills_required or [],
         "description": j.description,
         "positions": j.positions,
         "status": j.status.value,
         "deadline": j.deadline.isoformat() if j.deadline else None,
         "portal_job_id": j.portal_job_id,
+        "portal_status": j.portal_status,
+        "posted_by": j.posted_by,
+        "source": j.source or "crm",
         "assigned_to_id": j.assigned_to_id,
         "created_by_id": j.created_by_id,
         "created_at": j.created_at.isoformat(),
@@ -207,14 +219,16 @@ async def get_job(job_id: int, db: AsyncSession = Depends(get_db), current_user:
     rows = (await db.execute(
         select(Application.id, Application.candidate_id, Application.stage, Application.notes,
                Application.applied_at, Application.stage_changed_at, Application.created_at,
-               Candidate.name, Candidate.email)
+               Candidate.name, Candidate.email, Candidate.phone, Candidate.location, Candidate.education,
+               Candidate.expected_salary)
         .join(Candidate, Candidate.id == Application.candidate_id)
         .where(Application.job_id == job_id).order_by(Application.id.desc())
     )).all()
     iso = lambda d: d.isoformat() if d else None  # noqa: E731
     data["applications"] = [{
         "id": r.id, "job_id": job_id, "candidate_id": r.candidate_id, "candidate_name": r.name,
-        "candidate_email": r.email, "stage": r.stage, "notes": r.notes, "applied_at": iso(r.applied_at),
+        "candidate_email": r.email, "candidate_phone": r.phone, "candidate_location": r.location,
+        "candidate_education": r.education, "candidate_expected_salary": r.expected_salary, "stage": r.stage, "notes": r.notes, "applied_at": iso(r.applied_at),
         "stage_changed_at": iso(r.stage_changed_at), "created_at": iso(r.created_at),
     } for r in rows]
     return data

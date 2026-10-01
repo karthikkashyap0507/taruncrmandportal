@@ -6,6 +6,7 @@
 - joining reminders (expected joining date within 24 h)
 - overdue invoice alerts
 - expire MOUs whose end date has passed
+- pull new jobs/applications from the job portal (every PORTAL_SYNC_INTERVAL_SECONDS)
 Each reminder is sent once (a *_sent_at / reminded_at flag is stored).
 """
 import asyncio
@@ -117,8 +118,16 @@ async def run_once() -> dict:
     return stats
 
 
+async def _portal_sync() -> None:
+    from app.services import portal_sync
+    async with AsyncSessionLocal() as db:
+        await portal_sync.run_sync(db)
+
+
 async def scheduler_loop() -> None:
     await asyncio.sleep(min(10, settings.SCHEDULER_INTERVAL_SECONDS))
+    loop = asyncio.get_running_loop()
+    last_portal_sync = None
     while True:
         try:
             stats = await run_once()
@@ -126,4 +135,13 @@ async def scheduler_loop() -> None:
                 logger.info("scheduler: %s", stats)
         except Exception:
             logger.exception("scheduler run failed")
-        await asyncio.sleep(settings.SCHEDULER_INTERVAL_SECONDS)
+        # Pull new portal jobs/applications (failures are recorded on the sync status)
+        from app.services import portal_sync
+        if portal_sync.configured() and (last_portal_sync is None or
+                                         loop.time() - last_portal_sync >= settings.PORTAL_SYNC_INTERVAL_SECONDS):
+            last_portal_sync = loop.time()
+            try:
+                await _portal_sync()
+            except Exception:
+                logger.warning("portal sync failed; will retry on the next run", exc_info=True)
+        await asyncio.sleep(min(settings.SCHEDULER_INTERVAL_SECONDS, settings.PORTAL_SYNC_INTERVAL_SECONDS))

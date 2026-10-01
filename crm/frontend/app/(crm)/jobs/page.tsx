@@ -1,10 +1,12 @@
 "use client";
 import { useState } from "react";
+import { formatDistanceToNow } from "date-fns";
 import { useAuthStore } from "@/store/auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { jobsApi, apiError } from "@/lib/api";
+import { jobsApi, portalApi, apiError } from "@/lib/api";
+import { EDUCATION_OPTIONS, formatPlace } from "@/lib/format";
 import toast from "react-hot-toast";
-import { Plus, Search, Briefcase, MapPin, Users, Trash2, Eye, Edit2 } from "lucide-react";
+import { Plus, Search, Briefcase, MapPin, Users, Trash2, Eye, Edit2, RefreshCw, Globe } from "lucide-react";
 import { format } from "date-fns";
 
 const JOB_STATUSES = ["open", "on_hold", "closed", "filled"];
@@ -15,7 +17,8 @@ const STATUS_COLORS: Record<string, string> = {
 function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState({
     title: job?.title || "", client_name: job?.client_name || "",
-    location: job?.location || "", job_type: job?.job_type || "full-time",
+    location: job?.location || "", locality: job?.locality || "", education: job?.education || "",
+    salary_period: job?.salary_period || "month", job_type: job?.job_type || "full-time",
     experience_min: job?.experience_min || "", experience_max: job?.experience_max || "",
     salary_min: job?.salary_min || "", salary_max: job?.salary_max || "",
     positions: job?.positions || 1, status: job?.status || "open",
@@ -35,6 +38,8 @@ function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; on
         salary_min: form.salary_min ? parseFloat(form.salary_min) : undefined,
         salary_max: form.salary_max ? parseFloat(form.salary_max) : undefined,
         positions: parseInt(form.positions),
+        education: form.education || undefined,
+        locality: form.locality || undefined,
       };
       if (job?.id) await jobsApi.update(job.id, payload);
       else await jobsApi.create(payload);
@@ -69,6 +74,24 @@ function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; on
               <input type={f.type || "text"} className="input" value={(form as any)[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })} />
             </div>
           ))}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Locality / Area</label>
+            <input className="input" value={form.locality} onChange={e => setForm({ ...form, locality: e.target.value })} placeholder="e.g. JP Nagar" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Minimum Education</label>
+            <select className="input" value={form.education} onChange={e => setForm({ ...form, education: e.target.value })}>
+              <option value="">Not specified</option>
+              {EDUCATION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Salary is per</label>
+            <select className="input" value={form.salary_period} onChange={e => setForm({ ...form, salary_period: e.target.value })}>
+              <option value="month">Month</option>
+              <option value="year">Year</option>
+            </select>
+          </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Job Type</label>
             <select className="input" value={form.job_type} onChange={e => setForm({ ...form, job_type: e.target.value })}>
@@ -119,9 +142,26 @@ export default function JobsPage() {
     queryFn: () => jobsApi.list({ search, status: status || undefined, page, limit: 20 }).then(r => r.data),
   });
 
+  const { data: sync, refetch: refetchSync } = useQuery({
+    queryKey: ["portal-sync"],
+    queryFn: () => portalApi.status().then(r => r.data),
+    refetchInterval: 60_000,
+  });
+  const syncMutation = useMutation({
+    mutationFn: () => portalApi.sync().then(r => r.data),
+    onSuccess: (r: any) => {
+      const n = (r.jobs_created || 0) + (r.applications_created || 0);
+      toast.success(n ? `Synced: ${r.jobs_created} new job(s), ${r.applications_created} new applicant(s)` : "Up to date with the job portal");
+      qc.invalidateQueries({ queryKey: ["crm-jobs"] });
+      refetchSync();
+    },
+    onError: (e: any) => { toast.error(apiError(e, "Sync failed")); refetchSync(); },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => jobsApi.delete(id),
     onSuccess: () => { toast.success("Job deleted"); qc.invalidateQueries({ queryKey: ["crm-jobs"] }); },
+    onError: (e: any) => toast.error(apiError(e, "Failed to delete")),
   });
 
   const jobs = data?.data || [];
@@ -137,6 +177,31 @@ export default function JobsPage() {
           </button>
         )}
       </div>
+
+      {sync && (
+        <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border px-4 py-2.5 text-sm ${
+          !sync.configured ? "border-amber-200 bg-amber-50 text-amber-800"
+            : sync.last_error ? "border-red-200 bg-red-50 text-red-700" : "border-gray-200 bg-white text-gray-600"}`}>
+          <Globe size={15} className="flex-shrink-0" />
+          {!sync.configured ? (
+            <span>Job portal sync isn&apos;t set up on the server yet (missing integration key).</span>
+          ) : (
+            <span>
+              Job portal: {sync.synced_jobs} job{sync.synced_jobs !== 1 ? "s" : ""} synced ({sync.open_portal_jobs} open)
+              {" · "}
+              {sync.last_success_at ? `last synced ${formatDistanceToNow(new Date(sync.last_success_at + (String(sync.last_success_at).endsWith("Z") || String(sync.last_success_at).includes("+") ? "" : "Z")), { addSuffix: true })}` : "not synced yet"}
+              {" · syncs every "}{Math.round((sync.interval_seconds || 120) / 60)} min
+              {sync.last_error && <span className="block text-xs">Last attempt failed: {sync.last_error}</span>}
+            </span>
+          )}
+          {canEdit && sync.configured && (
+            <button onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}
+              className="ml-auto btn-secondary flex items-center gap-1.5 text-xs">
+              <RefreshCw size={13} className={syncMutation.isPending ? "animate-spin" : ""} /> {syncMutation.isPending ? "Syncing…" : "Sync now"}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-3">
         <div className="relative flex-1 max-w-sm">
@@ -163,10 +228,16 @@ export default function JobsPage() {
                 <p className="font-semibold text-gray-900">{j.title}</p>
                 {j.client_name && <p className="text-xs text-gray-500 mt-0.5">{j.client_name}</p>}
               </div>
-              <span className={`badge ${STATUS_COLORS[j.status] || "badge-gray"}`}>{j.status.replace("_", " ")}</span>
+              <div className="flex flex-col items-end gap-1">
+                <span className={`badge ${STATUS_COLORS[j.status] || "badge-gray"}`}>{j.status.replace("_", " ")}</span>
+                {j.source === "portal" && <span className="badge badge-blue text-[10px]">Portal</span>}
+              </div>
             </div>
+            {j.portal_status === "pending" && (
+              <p className="mb-2 text-xs text-amber-600">Waiting for admin approval on the job portal</p>
+            )}
             <div className="space-y-1.5 mb-3">
-              {j.location && <p className="flex items-center gap-1.5 text-xs text-gray-500"><MapPin size={11} />{j.location}</p>}
+              {(j.location || j.locality) && <p className="flex items-center gap-1.5 text-xs text-gray-500"><MapPin size={11} />{formatPlace(j.location, j.locality)}</p>}
               <p className="flex items-center gap-1.5 text-xs text-gray-500"><Users size={11} />{j.positions} opening{j.positions !== 1 ? "s" : ""}</p>
               {(j.experience_min || j.experience_max) && (
                 <p className="text-xs text-gray-500">{j.experience_min || 0}–{j.experience_max || "∞"} yrs exp</p>

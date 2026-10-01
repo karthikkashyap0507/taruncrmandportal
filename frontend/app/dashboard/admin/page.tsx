@@ -1,14 +1,16 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  Briefcase, Building2, FileText, Inbox, LogOut, Mail, Newspaper, RefreshCw, Send, Shield, Users,
+  Briefcase, Building2, FileText, Inbox, LogOut, Mail, Newspaper, Plus, RefreshCw, Send, Shield, Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { dashboardPathForRole } from "@/lib/dashboard-path";
 import { adminApi, apiError } from "@/services/api";
+import { educationLabel, formatPlace, formatSalary } from "@/lib/format";
 import { useAuthStore } from "@/store/auth-store";
 
 type Row = Record<string, any>;  // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -59,17 +61,18 @@ function Overview() {
   const cards: [string, string][] = [
     ["Users", "total_users"], ["Candidates", "total_candidates"], ["Recruiters", "total_recruiters"],
     ["Companies", "total_companies"], ["Jobs", "total_jobs"], ["Published jobs", "published_jobs"],
+    ["Jobs awaiting approval", "pending_jobs"],
     ["Applications", "total_applications"], ["Failed emails", "failed_emails"],
     ["New enquiries", "new_enquiries"], ["Job-alert subscribers", "newsletter_subscribers"],
   ];
-  const alerting = (key: string) => (key === "failed_emails" || key === "new_enquiries") && data?.[key];
+  const alerting = (key: string) => (key === "failed_emails" || key === "new_enquiries" || key === "pending_jobs") && data?.[key];
   if (error) return <p className="text-red-400">{error}</p>;
   return (
     <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
       {cards.map(([label, key]) => (
         <div key={key} className="glass-card p-5">
           <p className="text-xs text-[#94A3B8]">{label}</p>
-          <p className={`mt-1 text-2xl font-bold ${alerting(key) ? (key === "new_enquiries" ? "text-yellow-400" : "text-red-400") : "text-white"}`}>
+          <p className={`mt-1 text-2xl font-bold ${alerting(key) ? (key === "failed_emails" ? "text-red-400" : "text-yellow-400") : "text-white"}`}>
             {data ? data[key] ?? 0 : "…"}
           </p>
         </div>
@@ -145,26 +148,83 @@ function CompaniesTab() {
   );
 }
 
+const JOB_STATUS_LABEL: Record<string, string> = {
+  pending: "Awaiting approval", published: "Live", rejected: "Rejected", draft: "Draft", closed: "Closed",
+};
+
 function JobsTab() {
+  const [status, setStatus] = useState("pending");
   const [page, setPage] = useState(0);
-  const { data, reload } = useLoader<Row[]>(() => adminApi.listJobs({ skip: page * 50, limit: 50 }), [page]);
+  const [open, setOpen] = useState<number | null>(null);
+  const { data, reload } = useLoader<Row[]>(
+    () => adminApi.listJobs({ status: status || undefined, skip: page * 50, limit: 50 }), [status, page]);
   const rows = data || [];
+  const reject = async (j: Row) => {
+    const reason = prompt(`Why is "${j.title}" being rejected? The poster sees this and can fix the job.`);
+    if (reason === null) return;
+    if (reason.trim().length < 3) { alert("Please give a short reason (at least 3 characters)."); return; }
+    await act(() => adminApi.rejectJob(j.id, reason.trim()), reload);
+  };
   return (
     <div className="space-y-4">
-      <Table head={["Job", "Company", "Status", "Moderate"]} empty={rows.length === 0}>
+      <div className="flex flex-wrap items-center gap-2">
+        {[["pending", "Awaiting approval"], ["published", "Live"], ["rejected", "Rejected"], ["draft", "Draft"], ["closed", "Closed"], ["", "All"]].map(([s, label]) => (
+          <button key={s} onClick={() => { setStatus(s); setPage(0); }}
+                  className={`rounded-lg px-3 py-1.5 text-xs ${status === s ? "bg-white/15 text-white" : "bg-white/5 text-[#94A3B8]"}`}>
+            {label}
+          </button>
+        ))}
+        <Link href="/dashboard/recruiter" className="ml-auto">
+          <Button variant="outline" className="border-white/10"><Plus className="mr-2 h-4 w-4" /> Post a job</Button>
+        </Link>
+      </div>
+      <p className="text-xs text-[#64748B]">Jobs posted by recruiters and freelancers stay hidden from candidates until you approve them. Click a row to read the full job.</p>
+      <Table head={["Job", "Posted by", "Location", "Pay", "Status", ""]} empty={rows.length === 0}>
         {rows.map(j => (
-          <tr key={j.id} className="border-b border-white/5">
-            <td className="px-4 py-3 text-white">{j.title}</td>
-            <td className="px-4 py-3 text-[#94A3B8]">#{j.company_id}</td>
-            <td className="px-4 py-3 text-xs text-[#94A3B8]">{j.status}</td>
-            <td className="px-4 py-3 text-xs space-x-3 whitespace-nowrap">
-              {["published", "closed", "draft"].filter(s => s !== j.status).map(s => (
-                <button key={s} onClick={() => act(() => adminApi.updateJobStatus(j.id, s), reload)} className="text-[#3B82F6] hover:underline">
-                  {s === "published" ? "Publish" : s === "closed" ? "Close" : "Unpublish"}
-                </button>
-              ))}
-            </td>
-          </tr>
+          <Fragment key={j.id}>
+            <tr onClick={() => setOpen(open === j.id ? null : j.id)} className="cursor-pointer border-b border-white/5 align-top hover:bg-white/5">
+              <td className="px-4 py-3">
+                <div className="text-white">{j.title}</div>
+                <div className="text-xs text-[#94A3B8]">{j.company_name || `Company #${j.company_id}`}</div>
+              </td>
+              <td className="px-4 py-3 text-xs">
+                <div className="text-white">{j.posted_by || "—"}</div>
+                <div className="text-[#94A3B8]">{j.posted_by_email || ""}</div>
+              </td>
+              <td className="px-4 py-3 text-xs text-[#94A3B8]">{formatPlace(j.location, j.locality) || "—"}</td>
+              <td className="px-4 py-3 text-xs text-[#94A3B8] whitespace-nowrap">{formatSalary(j.salary_min, j.salary_max, j.salary_period)}</td>
+              <td className={`px-4 py-3 text-xs whitespace-nowrap ${j.status === "pending" ? "text-yellow-400" : j.status === "published" ? "text-green-400" : j.status === "rejected" ? "text-red-400" : "text-[#94A3B8]"}`}>
+                {JOB_STATUS_LABEL[j.status] || j.status}
+              </td>
+              <td className="px-4 py-3 text-right text-xs space-x-3 whitespace-nowrap" onClick={ev => ev.stopPropagation()}>
+                {j.status !== "published" && (
+                  <button onClick={() => act(() => adminApi.approveJob(j.id), reload)} className="text-green-300 hover:underline">
+                    {j.status === "pending" || j.status === "rejected" ? "Approve" : "Publish"}
+                  </button>
+                )}
+                {(j.status === "pending" || j.status === "published") && (
+                  <button onClick={() => reject(j)} className="text-red-300 hover:underline">Reject</button>
+                )}
+                {j.status === "published" && (
+                  <button onClick={() => act(() => adminApi.updateJobStatus(j.id, "closed"), reload)} className="text-[#3B82F6] hover:underline">Close</button>
+                )}
+              </td>
+            </tr>
+            {open === j.id && (
+              <tr className="border-b border-white/5">
+                <td colSpan={6} className="px-4 pb-4 text-sm text-[#CBD5E1]">
+                  <div className="mb-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-[#94A3B8]">
+                    <span>Qualification: {educationLabel(j.education) || "Not stated"}</span>
+                    <span>Experience: {j.experience_level || "Not stated"}</span>
+                    <span>Type: {j.employment_type?.replace("_", " ") || "Not stated"}</span>
+                    <span>Posted: {when(j.created_at)}</span>
+                  </div>
+                  {j.review_note && <p className="mb-2 text-xs text-red-300">Rejection reason: {j.review_note}</p>}
+                  <p className="whitespace-pre-wrap break-words">{j.description}</p>
+                </td>
+              </tr>
+            )}
+          </Fragment>
         ))}
       </Table>
       <div className="flex justify-center gap-2">

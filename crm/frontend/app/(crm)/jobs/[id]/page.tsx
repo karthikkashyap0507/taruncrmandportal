@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { jobsApi, candidatesApi, apiError } from "@/lib/api";
+import { jobsApi, apiError } from "@/lib/api";
+import { EDUCATION_OPTIONS, educationLabel, formatPlace, formatSalaryRange } from "@/lib/format";
 import { useAuthStore } from "@/store/auth";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
@@ -15,10 +16,10 @@ const JOB_STATUSES = ["open", "on_hold", "closed", "filled"];
 const STATUS_COLORS: Record<string, string> = {
   open: "badge-green", on_hold: "badge-yellow", closed: "badge-gray", filled: "badge-blue",
 };
-const STAGES = ["applied", "screening", "interview", "offer", "hired", "rejected"];
+const STAGES = ["applied", "screening", "interview", "offer", "hired", "rejected", "withdrawn"];
 const STAGE_COLORS: Record<string, string> = {
   applied: "badge-gray", screening: "badge-blue", interview: "badge-purple",
-  offer: "badge-yellow", hired: "badge-green", rejected: "badge-red",
+  offer: "badge-yellow", hired: "badge-green", rejected: "badge-red", withdrawn: "badge-gray",
 };
 
 function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
@@ -58,14 +59,6 @@ export default function JobDetailPage() {
     queryKey: ["job", id],
     queryFn: () => jobsApi.get(Number(id)).then(r => r.data),
   });
-
-  // Candidate lookup so applications can show names, not just ids
-  const { data: candData } = useQuery({
-    queryKey: ["candidates", "lookup"],
-    queryFn: () => candidatesApi.list({ limit: 200 }).then(r => r.data),
-  });
-  const candMap: Record<number, any> = {};
-  (candData?.data || []).forEach((c: any) => { candMap[c.id] = c; });
 
   const applications = job?.applications || [];
 
@@ -112,9 +105,7 @@ export default function JobDetailPage() {
     );
   }
 
-  const salary = job.salary_min || job.salary_max
-    ? `₹${Number(job.salary_min || 0).toLocaleString("en-IN")} – ₹${Number(job.salary_max || 0).toLocaleString("en-IN")}`
-    : null;
+  const salary = formatSalaryRange(job.salary_min, job.salary_max, job.salary_period);
   const experience = job.experience_min != null || job.experience_max != null
     ? `${job.experience_min ?? 0} – ${job.experience_max ?? "+"} yrs`
     : null;
@@ -132,7 +123,7 @@ export default function JobDetailPage() {
               <Briefcase size={20} className="text-brand-600" />
               {job.title}
             </h1>
-            <p className="text-sm text-gray-500">{job.client_name || "—"}{job.location ? ` · ${job.location}` : ""}</p>
+            <p className="text-sm text-gray-500">{job.client_name || "—"}{formatPlace(job.location, job.locality) ? ` · ${formatPlace(job.location, job.locality)}` : ""}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -161,7 +152,8 @@ export default function JobDetailPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
               <InfoRow label="Title" value={job.title} icon={Briefcase} />
               <InfoRow label="Client" value={job.client_name} icon={Users} />
-              <InfoRow label="Location" value={job.location} icon={MapPin} />
+              <InfoRow label="Location" value={formatPlace(job.location, job.locality)} icon={MapPin} />
+              <InfoRow label="Education" value={educationLabel(job.education)} icon={Tag} />
               <InfoRow label="Job Type" value={job.job_type} icon={Tag} />
               <InfoRow label="Experience" value={experience} icon={TrendingUp} />
               <InfoRow label="Salary" value={salary} icon={IndianRupee} />
@@ -193,11 +185,12 @@ export default function JobDetailPage() {
                 <p className="text-sm text-gray-400 text-center py-4">No applications yet</p>
               ) : (
                 applications.map((app: any) => {
-                  const c = candMap[app.candidate_id];
+                  const details = [app.candidate_phone, app.candidate_location, educationLabel(app.candidate_education),
+                                   app.candidate_expected_salary && `expects ${app.candidate_expected_salary}`].filter(Boolean);
                   return (
                     <div key={app.id} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-gray-100 bg-white">
                       <button
-                        onClick={() => c && router.push(`/candidates/${app.candidate_id}`)}
+                        onClick={() => router.push(`/candidates/${app.candidate_id}`)}
                         className="flex items-center gap-2 min-w-0 text-left"
                       >
                         <div className="w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center flex-shrink-0">
@@ -205,9 +198,10 @@ export default function JobDetailPage() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">
-                            {c ? c.name : `Candidate #${app.candidate_id}`}
+                            {app.candidate_name || `Candidate #${app.candidate_id}`}
                           </p>
-                          {c?.email && <p className="text-xs text-gray-500 truncate">{c.email}</p>}
+                          {app.candidate_email && <p className="text-xs text-gray-500 truncate">{app.candidate_email}</p>}
+                          {details.length > 0 && <p className="text-xs text-gray-400 truncate">{details.join(" · ")}</p>}
                         </div>
                       </button>
                       <select
@@ -228,8 +222,10 @@ export default function JobDetailPage() {
         {/* Right column */}
         <div className="space-y-5">
           <Section title="Meta">
-            <InfoRow label="Source" value={job.source} icon={TrendingUp} />
+            <InfoRow label="Source" value={job.source === "portal" ? "Job portal" : "Added in CRM"} icon={TrendingUp} />
             {job.portal_job_id != null && <InfoRow label="Portal ID" value={job.portal_job_id} icon={Tag} />}
+            {job.posted_by && <InfoRow label="Posted by" value={job.posted_by} icon={User} />}
+            {job.portal_status === "pending" && <InfoRow label="Portal status" value="Waiting for admin approval" icon={Clock} />}
             <InfoRow label="Created" value={format(new Date(job.created_at), "MMM d, yyyy")} icon={Clock} />
           </Section>
 
@@ -275,6 +271,9 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
     title: job.title || "",
     client_name: job.client_name || "",
     location: job.location || "",
+    locality: job.locality || "",
+    education: job.education || "",
+    salary_period: job.salary_period || "month",
     job_type: job.job_type || "full-time",
     experience_min: job.experience_min != null ? String(job.experience_min) : "",
     experience_max: job.experience_max != null ? String(job.experience_max) : "",
@@ -299,6 +298,8 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
         salary_max: form.salary_max ? parseFloat(form.salary_max) : undefined,
         positions: form.positions ? parseInt(form.positions) : 1,
         skills_required: form.skills_required ? form.skills_required.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
+        education: form.education || undefined,
+        locality: form.locality || undefined,
       });
       toast.success("Job updated");
       onSaved();
@@ -322,6 +323,7 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
             { label: "Title *", key: "title" },
             { label: "Client Name", key: "client_name" },
             { label: "Location", key: "location" },
+            { label: "Locality / Area", key: "locality" },
             { label: "Experience Min (yrs)", key: "experience_min", type: "number" },
             { label: "Experience Max (yrs)", key: "experience_max", type: "number" },
             { label: "Salary Min", key: "salary_min", type: "number" },
@@ -338,6 +340,20 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
               />
             </div>
           ))}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Salary is per</label>
+            <select className="input" value={form.salary_period} onChange={e => setForm({ ...form, salary_period: e.target.value })}>
+              <option value="month">Month</option>
+              <option value="year">Year</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Minimum Education</label>
+            <select className="input" value={form.education} onChange={e => setForm({ ...form, education: e.target.value })}>
+              <option value="">Not specified</option>
+              {EDUCATION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Job Type</label>
             <select className="input" value={form.job_type} onChange={e => setForm({ ...form, job_type: e.target.value })}>

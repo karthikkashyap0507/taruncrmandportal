@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, Bookmark, BookmarkCheck, Briefcase, Check,
-  Copy, Link2, MapPin, Share2, X, Zap,
+  Copy, GraduationCap, Link2, MapPin, Share2, X, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApplyDialog } from "@/components/shared/apply-dialog";
 import { jobsApi, savedJobsApi, apiError } from "@/services/api";
-import { formatSalary } from "@/lib/format";
+import { educationLabel, formatPlace, formatSalary } from "@/lib/format";
 import { useAuthStore } from "@/store/auth-store";
 import type { Job } from "@/types";
 
@@ -250,14 +250,20 @@ export default function JobDetailsPage() {
                 <div className="flex flex-wrap gap-4">
                   <span className="flex items-center gap-2 text-[#94A3B8]">
                     <MapPin className="h-5 w-5 text-[#3B82F6]" />
-                    {job.location || "Remote"}
+                    {formatPlace(job.location, job.locality) || "Remote"}
                   </span>
                   <span className="flex items-center gap-2 text-[#94A3B8]">
                     <Briefcase className="h-5 w-5 text-[#8B5CF6]" />
                     {job.experience_level || "Entry Level"}
                   </span>
+                  {job.education && (
+                    <span className="flex items-center gap-2 text-[#94A3B8]">
+                      <GraduationCap className="h-5 w-5 text-[#10B981]" />
+                      {educationLabel(job.education)}
+                    </span>
+                  )}
                   <span className="text-lg font-semibold text-[#10B981]">
-                    {formatSalary(job.salary_min, job.salary_max)}
+                    {formatSalary(job.salary_min, job.salary_max, job.salary_period)}
                   </span>
                 </div>
               </div>

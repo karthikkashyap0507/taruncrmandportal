@@ -36,6 +36,13 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _plain_errors(exc: RequestValidationError) -> list[dict]:
+    """Field errors as plain JSON. Pydantic's raw errors can hold exception objects (which can't be
+    serialised) and echo the submitted value back (which could be a password), so keep only these."""
+    return [{"loc": [str(p) for p in err.get("loc", [])], "msg": str(err.get("msg", "")).removeprefix("Value error, "),
+             "type": str(err.get("type", ""))} for err in exc.errors()]
+
+
 def _friendly_validation(exc: RequestValidationError) -> str:
     parts = []
     for err in exc.errors()[:3]:
@@ -48,7 +55,7 @@ def _friendly_validation(exc: RequestValidationError) -> str:
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError):
-        return JSONResponse(status_code=422, content={"detail": _friendly_validation(exc), "errors": exc.errors()})
+        return JSONResponse(status_code=422, content={"detail": _friendly_validation(exc), "errors": _plain_errors(exc)})
 
     @app.exception_handler(IntegrityError)
     async def _integrity(request: Request, exc: IntegrityError):

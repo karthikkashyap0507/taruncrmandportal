@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -33,6 +33,9 @@ class Application(Base):
     score: Mapped[float | None] = mapped_column(Float)
     applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True,
+        default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Candidate application details
     full_name: Mapped[str | None] = mapped_column(String(255))
@@ -40,6 +43,9 @@ class Application(Base):
     years_experience: Mapped[int | None] = mapped_column(Integer)
     cover_letter: Mapped[str | None] = mapped_column(Text)
     resume_url: Mapped[str | None] = mapped_column(String(500))
+    education: Mapped[str | None] = mapped_column(String(20))
+    expected_salary: Mapped[int | None] = mapped_column(Integer)          # ₹ per month
+    current_location: Mapped[str | None] = mapped_column(String(255))     # city / locality
 
     candidate = relationship("Candidate", back_populates="applications")
     job = relationship("Job", back_populates="applications")

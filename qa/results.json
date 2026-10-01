@@ -1,12 +1,12 @@
 {
-  "run_at": "2026-10-01T13:31:22",
+  "run_at": "2026-10-01T23:55:19",
   "results": [
     {
       "section": "Notifications",
       "item": "N-6a",
       "title": "Failed notifications are logged with the error and a retry time",
       "status": "PASS",
-      "evidence": "portal email #1 status=failed error='simulated delivery failure (EMAIL_BACKEND=fai...' retry scheduled at 2026-10-01 08:01:50.308033; CRM email #1 status=failed"
+      "evidence": "portal email #1 status=failed error='simulated delivery failure (EMAIL_BACKEND=fai...' retry scheduled at 2026-10-01 18:25:37.783354; CRM email #1 status=failed"
     },
     {
       "section": "Notifications",
@@ -167,21 +167,21 @@
       "item": "DB-1",
       "title": "Slow queries",
       "status": "PASS",
-      "evidence": "all key endpoints p95 < 500 ms on seeded data; slowest: CRM GET /jobs/{id} (2,000 applicants) p95 103 ms; requests over 1 s are logged as warnings"
+      "evidence": "all key endpoints p95 < 500 ms on seeded data; slowest: CRM GET /jobs/{id} (2,000 applicants) p95 121 ms; requests over 1 s are logged as warnings"
     },
     {
       "section": "Database Performance",
       "item": "DB-2",
       "title": "Missing database indexes",
       "status": "PASS",
-      "evidence": "11 hot queries use indexes (SQLite EXPLAIN QUERY PLAN); 32 indexes in the portal DB, 79 in the CRM DB"
+      "evidence": "11 hot queries use indexes (SQLite EXPLAIN QUERY PLAN); 35 indexes in the portal DB, 81 in the CRM DB"
     },
     {
       "section": "Database Performance",
       "item": "DB-3",
       "title": "Large candidate / job queries",
       "status": "PASS",
-      "evidence": "5,000+ jobs, 10,000+ candidates, 2,000-applicant jobs: responses capped by page size, totals correct (10010 CRM candidates), applicant lists load candidate names in one query (p95 26 ms / 103 ms)"
+      "evidence": "5,000+ jobs, 10,000+ candidates, 2,000-applicant jobs: responses capped by page size, totals correct (10010 CRM candidates), applicant lists load candidate names in one query (p95 19 ms / 121 ms)"
     },
     {
       "section": "Database Performance",
@@ -195,7 +195,7 @@
       "item": "DB-5",
       "title": "API response time",
       "status": "PASS",
-      "evidence": "every response carries X-Response-Time and X-Request-ID; portal GET /jobs (5,000+ jobs): median 7 ms / p95 14 ms; portal GET /jobs search: median 7 ms / p95 8 ms; portal GET /jobs/{id}/applications (2,000 applicants): median 18 ms / p95 26 ms; portal GET /admin/users: median 5 ms / p95 8 ms; CRM GET /candidates (10,000+): median 14 ms / p95 17 ms; CRM GET /candidates search: median 23 ms / p95 26 ms; CRM GET /leads (3,000+): median 14 ms / p95 16 ms; CRM GET /jobs/{id} (2,000 applicants): median 88 ms / p95 103 ms; CRM GET /analytics/overview: median 19 ms / p95 22 ms"
+      "evidence": "every response carries X-Response-Time and X-Request-ID; portal GET /jobs (5,000+ jobs): median 6 ms / p95 8 ms; portal GET /jobs search: median 6 ms / p95 8 ms; portal GET /jobs/{id}/applications (2,000 applicants): median 16 ms / p95 19 ms; portal GET /admin/users: median 5 ms / p95 8 ms; CRM GET /candidates (10,000+): median 14 ms / p95 17 ms; CRM GET /candidates search: median 20 ms / p95 22 ms; CRM GET /leads (3,000+): median 13 ms / p95 15 ms; CRM GET /jobs/{id} (2,000 applicants): median 98 ms / p95 121 ms; CRM GET /analytics/overview: median 18 ms / p95 20 ms"
     },
     {
       "section": "Database Performance",
@@ -223,14 +223,14 @@
       "item": "P2-3",
       "title": "Backup / recovery",
       "status": "PASS",
-      "evidence": "online backup of the live CRM DB while it was serving traffic (24 tables, 15,219 rows, 857,044 bytes gz), integrity verified, restored copy has the same 10,010 candidates; restore refuses to overwrite without --force and keeps the old DB; nightly cron + pre-deploy backup installed by update.sh"
+      "evidence": "online backup of the live CRM DB while it was serving traffic (25 tables, 15,219 rows, 871,719 bytes gz), integrity verified, restored copy has the same 10,010 candidates; restore refuses to overwrite without --force and keeps the old DB; nightly cron + pre-deploy backup installed by update.sh"
     },
     {
       "section": "P2",
       "item": "P2-4",
       "title": "Mobile UX",
       "status": "PASS",
-      "evidence": "static review of every page: all 10 tables scroll horizontally on small screens, 42 form grids collapse to one column below 640 px, CRM sidebar becomes a slide-out menu, wide decorative elements are clipped (no sideways scrolling); confirm visually on a phone after deploy"
+      "evidence": "static review of every page: all 10 tables scroll horizontally on small screens, 43 form grids collapse to one column below 640 px, CRM sidebar becomes a slide-out menu, wide decorative elements are clipped (no sideways scrolling); confirm visually on a phone after deploy"
     },
     {
       "section": "Also fixed",
@@ -245,6 +245,34 @@
       "title": "Newsletter sign-up, weekly job alerts and unsubscribe (was a dead form)",
       "status": "PASS",
       "evidence": "sign-up saved and a confirmation email sent (double opt-in); forged link -> 400, real link confirms; weekly new-jobs email ('10 new jobs on JobsNexGen this week') delivered with job links and an unsubscribe link; pressing 'send now' twice doesn't double-send; unsubscribe works and shows in the admin list"
+    },
+    {
+      "section": "Meeting feedback",
+      "item": "X-3",
+      "title": "Freelancer job posts need admin approval",
+      "status": "PASS",
+      "evidence": "a freelancer's job starts 'awaiting approval' and is hidden from candidates; admins are emailed; the poster can't approve it (403); a rejection reason reaches the poster by email and on their dashboard; editing sends it back for review; after approval it is live and can be closed and reopened without another review; an admin's own job goes live at once (pending now: 0)"
+    },
+    {
+      "section": "Meeting feedback",
+      "item": "X-4",
+      "title": "Job form: education, salary per month/year, city and locality; better filters",
+      "status": "PASS",
+      "evidence": "jobs store minimum education, city + locality and salary per month or per year (bad values -> 422); public search filters by qualification (12th-pass sees 10th jobs, not graduate jobs), by area ('JP Nagar'), and by monthly pay, comparing yearly salaries fairly (7.2L/year = 60k/month); applicants give education, expected salary and current location, and the recruiter sees them"
+    },
+    {
+      "section": "Meeting feedback",
+      "item": "X-5",
+      "title": "Portal jobs and applicants reach the CRM automatically (Open Jobs no longer 0)",
+      "status": "PASS",
+      "evidence": "the approved portal job appeared in the CRM by itself as an open job with education, locality, monthly pay and who posted it; the dashboard's Open Jobs count is 3; the applicant became a CRM candidate with education, expected salary, location and their resume; moving the application on the portal moved it in the CRM; a job awaiting approval shows 'on hold' and a deleted one is closed; a CRM user's own status is kept; HR can see the sync status but only owner/BDM can press Sync now"
+    },
+    {
+      "section": "Meeting feedback",
+      "item": "X-6",
+      "title": "The portal-CRM link is private",
+      "status": "PASS",
+      "evidence": "the portal's CRM feed refuses requests without the key (403) or with a wrong key (403), and refuses anything arriving through the public website even with the right key (404); only the CRM on the same server can read it"
     }
   ]
 }

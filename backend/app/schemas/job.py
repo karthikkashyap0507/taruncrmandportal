@@ -4,7 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.application import ApplicationStatus
-from app.models.job import JobStatus
+from app.models.job import EDUCATION_LEVELS, SALARY_PERIODS, JobStatus
 from app.models.message import MessageType
 
 
@@ -40,6 +40,10 @@ class ApplicationResponse(BaseModel):
     years_experience: Optional[int] = None
     cover_letter: Optional[str] = None
     resume_url: Optional[str] = None
+    education: Optional[str] = None
+    expected_salary: Optional[int] = None
+    current_location: Optional[str] = None
+    job_title: Optional[str] = None
     candidate_info: Optional[CandidateInfo] = None
     model_config = {"from_attributes": True}
 
@@ -50,6 +54,14 @@ class ApplicationCreate(BaseModel):
     years_experience: Optional[int] = Field(default=None, ge=0, le=60)
     cover_letter: Optional[str] = Field(default=None, max_length=10000)
     resume_url: Optional[str] = Field(default=None, max_length=500)
+    education: Optional[str] = None
+    expected_salary: Optional[int] = Field(default=None, ge=0, le=100_000_000)  # ₹ per month
+    current_location: Optional[str] = Field(default=None, max_length=255)
+
+    @field_validator("education")
+    @classmethod
+    def known_education(cls, v):
+        return _check_education(v)
 
 
 class ApplicationUpdate(BaseModel):
@@ -91,6 +103,26 @@ def _check_salary(salary_min, salary_max):
         raise ValueError("Minimum salary cannot be greater than maximum salary")
 
 
+def _check_education(v):
+    if v in (None, ""):
+        return None
+    if v not in EDUCATION_LEVELS:
+        raise ValueError(f"education must be one of: {', '.join(EDUCATION_LEVELS)}")
+    return v
+
+
+def _check_period(v):
+    if v in (None, ""):
+        return None
+    if v not in SALARY_PERIODS:
+        raise ValueError("salary_period must be 'month' or 'year'")
+    return v
+
+
+def _strip(v):
+    return " ".join(v.split()) if isinstance(v, str) else v
+
+
 class JobCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=255)
     description: str = Field(..., min_length=10, max_length=20000)
@@ -100,13 +132,31 @@ class JobCreate(BaseModel):
     skills: list[str] = []
     experience_level: Optional[str] = Field(default=None, max_length=100)
     location: Optional[str] = Field(default=None, max_length=255)
+    locality: Optional[str] = Field(default=None, max_length=120)
+    education: Optional[str] = None
+    salary_period: Optional[str] = "month"
     employment_type: Optional[str] = Field(default=None, max_length=50)
-    status: JobStatus = JobStatus.published
+    status: JobStatus = JobStatus.published  # employers' "published" becomes "pending" until approved
 
     @field_validator("skills")
     @classmethod
     def clean_skills(cls, v):
         return _clean_skills(v)
+
+    @field_validator("location", "locality", mode="before")
+    @classmethod
+    def tidy(cls, v):
+        return _strip(v) or None
+
+    @field_validator("education")
+    @classmethod
+    def known_education(cls, v):
+        return _check_education(v)
+
+    @field_validator("salary_period")
+    @classmethod
+    def known_period(cls, v):
+        return _check_period(v)
 
     @model_validator(mode="after")
     def salary_range(self):
@@ -122,6 +172,9 @@ class JobUpdate(BaseModel):
     skills: Optional[list[str]] = None
     experience_level: Optional[str] = Field(default=None, max_length=100)
     location: Optional[str] = Field(default=None, max_length=255)
+    locality: Optional[str] = Field(default=None, max_length=120)
+    education: Optional[str] = None
+    salary_period: Optional[str] = None
     employment_type: Optional[str] = Field(default=None, max_length=50)
     status: Optional[JobStatus] = None
 
@@ -129,6 +182,21 @@ class JobUpdate(BaseModel):
     @classmethod
     def clean_skills(cls, v):
         return _clean_skills(v)
+
+    @field_validator("location", "locality", mode="before")
+    @classmethod
+    def tidy(cls, v):
+        return _strip(v) or None
+
+    @field_validator("education")
+    @classmethod
+    def known_education(cls, v):
+        return _check_education(v)
+
+    @field_validator("salary_period")
+    @classmethod
+    def known_period(cls, v):
+        return _check_period(v)
 
     @model_validator(mode="after")
     def salary_range(self):
@@ -147,7 +215,12 @@ class JobResponse(BaseModel):
     skills: Optional[list]
     experience_level: Optional[str]
     location: Optional[str]
+    locality: Optional[str] = None
+    education: Optional[str] = None
+    salary_period: Optional[str] = None
     employment_type: Optional[str]
     status: JobStatus
+    review_note: Optional[str] = None
+    created_at: Optional[datetime] = None
     company: Optional[CompanyResponse] = None
     model_config = {"from_attributes": True}

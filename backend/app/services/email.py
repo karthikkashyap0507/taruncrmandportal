@@ -394,3 +394,48 @@ def build_digest_email(jobs: list[dict], unsubscribe_url: str) -> tuple[str, str
                  footer_note=f'You subscribed to weekly job alerts on jobsnexgen.com. '
                              f'<a href="{_e(unsubscribe_url)}" style="color:#475569">Unsubscribe</a>')
     return f"{count} new job{'s' if count != 1 else ''} on JobsNexGen this week", html
+
+
+# ── Job approval ──────────────────────────────────────────────────────────────
+
+def send_job_pending_email(to_email: str, admin_name: str, job_title: str, company: str,
+                           poster_name: str, poster_email: str) -> None:
+    body = f"""
+    <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">A job is waiting for approval</h2>
+    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{_e(admin_name)}</strong>,</p>
+    <p style="margin:0 0 16px;color:{_MUTED}">
+      <strong style="color:{_WHITE}">{_e(poster_name)}</strong> ({_e(poster_email)}) posted
+      <strong style="color:{_WHITE}">{_e(job_title)}</strong>{f" for {_e(company)}" if company else ""}.
+      It stays hidden from candidates until you approve it.
+    </p>"""
+    html = _wrap(body, f"{settings.FRONTEND_URL}/dashboard/admin", "Review Jobs →")
+    _send_async(to_email, admin_name, f"Approve job: {_one_line(job_title)[:120]}", html, category="job_pending")
+
+
+def send_job_review_email(to_email: str, name: str, job_id: int, job_title: str, approved: bool,
+                          reason: str | None) -> None:
+    if approved:
+        body = f"""
+    <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">Your job is live ✅</h2>
+    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{_e(name)}</strong>,</p>
+    <p style="margin:0 0 16px;color:{_MUTED}">
+      <strong style="color:{_WHITE}">{_e(job_title)}</strong> was approved and candidates can now see it and apply.
+    </p>"""
+        html = _wrap(body, f"{settings.FRONTEND_URL}/jobs/{job_id}", "View Job →")
+        subject = f"Approved: {_one_line(job_title)[:120]}"
+    else:
+        body = f"""
+    <h2 style="margin:0 0 8px;color:{_WHITE};font-size:22px">Your job needs changes</h2>
+    <p style="margin:0 0 16px;color:{_MUTED}">Hi <strong style="color:{_WHITE}">{_e(name)}</strong>,</p>
+    <p style="margin:0 0 16px;color:{_MUTED}">
+      <strong style="color:{_WHITE}">{_e(job_title)}</strong> wasn't approved. Reason from the JobsNexGen team:
+    </p>
+    <div style="background:{_CARD};border-left:4px solid #F59E0B;border-radius:0 8px 8px 0;
+                padding:14px 16px;margin-bottom:16px">
+      <p style="margin:0;color:{_WHITE};font-size:14px;line-height:1.7;white-space:pre-wrap">{_e(reason)}</p>
+    </div>
+    <p style="margin:0;color:{_MUTED};font-size:13px">Edit the job from your dashboard and it goes back for review.</p>"""
+        html = _wrap(body, f"{settings.FRONTEND_URL}/dashboard/recruiter", "Edit Job →")
+        subject = f"Changes needed: {_one_line(job_title)[:120]}"
+    _send_async(to_email, name, subject, html, category="job_review")
+

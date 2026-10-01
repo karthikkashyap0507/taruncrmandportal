@@ -311,6 +311,7 @@ class Candidate(Base):
     experience_years: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     expected_salary: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    education: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     notice_period: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     skills: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     resume_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -354,11 +355,14 @@ class CRMJob(Base):
     company_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_companies.id"), nullable=True, index=True)
     client_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    locality: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    education: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     job_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="full-time")
     experience_min: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     experience_max: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     salary_min: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     salary_max: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    salary_period: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # month | year
     skills_required: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     positions: Mapped[int] = mapped_column(Integer, default=1)
@@ -366,6 +370,8 @@ class CRMJob(Base):
     deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     source: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default="crm")
     portal_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    portal_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    posted_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # portal poster, for portal jobs
     assigned_to_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -388,6 +394,8 @@ class Application(Base):
     stage_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, default=utcnow)
+    portal_application_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    portal_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     job: Mapped["CRMJob"] = relationship("CRMJob", back_populates="applications")
@@ -651,3 +659,15 @@ class Incentive(Base):
     approved_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SyncState(Base):
+    """Progress of the automatic job-portal sync (one row, name='portal')."""
+    __tablename__ = "crm_sync_state"
+    name: Mapped[str] = mapped_column(String(50), primary_key=True)
+    jobs_cursor: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    applications_cursor: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

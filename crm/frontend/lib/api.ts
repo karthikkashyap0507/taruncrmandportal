@@ -139,6 +139,12 @@ export const jobsApi = {
     api.patch(`/jobs/${jobId}/applications/${appId}/stage`, null, { params: { stage } }),
 };
 
+// Job portal sync (runs automatically every couple of minutes; owners/BDMs can also run it now)
+export const portalApi = {
+  status: () => api.get("/portal/status"),
+  sync: (full = false) => api.post("/portal/sync", null, { params: { full } }),
+};
+
 // Interviews
 export const interviewsApi = {
   list: () => api.get("/jobs/interviews/all"),

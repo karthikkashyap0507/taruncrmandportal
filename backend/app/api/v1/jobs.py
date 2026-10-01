@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import String, cast
+from sqlalchemy import Float, String, case, cast, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 EMPLOYER_ROLES = (UserRole.recruiter, UserRole.company_admin, UserRole.platform_admin)
+# Same order the website uses for its "My qualification" filter
+EDUCATION_RANK = {"any": 0, "10th": 1, "12th": 2, "iti": 2, "diploma": 3, "graduate": 4, "postgraduate": 5}
 
 # ─────────────────────────────────────────────
 # ATS Score Computation
@@ -138,8 +140,13 @@ def job_to_response(job: Job) -> JobResponse:
         skills=job.skills,
         experience_level=job.experience_level,
         location=job.location,
+        locality=job.locality,
+        education=job.education,
+        salary_period=job.salary_period or ("year" if (job.salary_min or job.salary_max) else None),
         employment_type=job.employment_type,
         status=job.status,
+        review_note=job.review_note,
+        created_at=job.created_at,
         company=CompanyResponse.model_validate(job.company) if job.company else None,
     )
 
@@ -170,12 +177,59 @@ def _build_app_response(app: Application) -> ApplicationResponse:
         years_experience=app.years_experience,
         cover_letter=app.cover_letter,
         resume_url=sign_resume_url(app.resume_url or (cand.resume_url if cand else None)),
+        education=app.education,
+        expected_salary=app.expected_salary,
+        current_location=app.current_location,
         candidate_info=candidate_info,
     )
 
 
 def _recruiter_for(db: Session, user: User) -> Recruiter | None:
     return db.query(Recruiter).filter(Recruiter.user_id == user.id).first()
+
+
+PLATFORM_COMPANY = "JobsNexGen"
+
+
+def _poster_profile(db: Session, user: User) -> Recruiter | None:
+    """The recruiter profile a job is posted under. Platform admins post on behalf of
+    JobsNexGen, so they get a profile in that company the first time they post."""
+    recruiter = _recruiter_for(db, user)
+    if recruiter or user.role != UserRole.platform_admin:
+        return recruiter
+    company = db.query(Company).filter(func.lower(Company.name) == PLATFORM_COMPANY.lower()).first()
+    if not company:
+        company = Company(name=PLATFORM_COMPANY)
+        db.add(company)
+        db.flush()
+    recruiter = Recruiter(user_id=user.id, company_id=company.id)
+    db.add(recruiter)
+    db.flush()
+    return recruiter
+
+
+def _status_for_poster(user: User, job: Job | None, requested: JobStatus) -> JobStatus:
+    """Employers' jobs go live only after a platform admin approves them. A job that
+    was approved before can be closed and reopened without a new review."""
+    if user.role == UserRole.platform_admin:
+        return requested
+    if requested in (JobStatus.pending, JobStatus.rejected):
+        raise HTTPException(status_code=422, detail="Choose Draft, Published or Closed")
+    if requested == JobStatus.published and not (job is not None and job.approved_at):
+        return JobStatus.pending
+    return requested
+
+
+def _notify_admins_of_pending(db: Session, job: Job, poster: User) -> None:
+    try:
+        from app.services.email import send_job_pending_email
+        admins = db.query(User).filter(User.role == UserRole.platform_admin, User.is_active.is_(True)).all()
+        company = db.query(Company).filter(Company.id == job.company_id).first()
+        for admin in admins:
+            send_job_pending_email(admin.email, admin.name, job.title, company.name if company else "",
+                                   poster.name, poster.email)
+    except Exception:
+        logger.exception("could not notify admins about pending job %s", job.id)
 
 
 def _can_manage(user: User, recruiter: Recruiter | None, job: Job) -> bool:
@@ -225,6 +279,9 @@ def list_jobs(
     experience_level: str | None = None,
     salary_min: int | None = None,
     salary_max: int | None = None,
+    min_monthly_salary: int | None = Query(None, ge=0, description="Jobs paying at least this many rupees a month"),
+    education: str | None = Query(None, description="The candidate's qualification; shows jobs open to it"),
+    locality: str | None = None,
     skills: str | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -235,10 +292,21 @@ def list_jobs(
         query = query.filter(
             Job.title.ilike(f"%{q}%") |
             Job.description.ilike(f"%{q}%") |
-            Job.location.ilike(f"%{q}%")
+            Job.location.ilike(f"%{q}%") |
+            Job.locality.ilike(f"%{q}%")
         )
     if location:
-        query = query.filter(Job.location.ilike(f"%{location}%"))
+        query = query.filter(Job.location.ilike(f"%{location}%") | Job.locality.ilike(f"%{location}%"))
+    if locality:
+        query = query.filter(Job.locality.ilike(f"%{locality}%"))
+    if education and education in EDUCATION_RANK:
+        # A candidate qualifies for jobs asking for their level or lower; "any" and unstated suit everyone
+        allowed = [lvl for lvl, rank in EDUCATION_RANK.items() if rank <= EDUCATION_RANK[education]]
+        query = query.filter(Job.education.in_(allowed) | Job.education.is_(None))
+    if min_monthly_salary is not None:
+        top = func.coalesce(Job.salary_max, Job.salary_min)
+        monthly = case((Job.salary_period == "month", cast(top, Float)), else_=cast(top, Float) / 12.0)
+        query = query.filter(top.isnot(None), monthly >= min_monthly_salary)
     if remote:
         query = query.filter(Job.location.ilike("%remote%"))
     if employment_type:
@@ -273,6 +341,8 @@ def list_my_jobs(
 ):
     recruiter = _recruiter_for(db, user)
     if not recruiter:
+        if user.role == UserRole.platform_admin:
+            return []  # their JobsNexGen posting profile is created with their first job
         raise HTTPException(status_code=404, detail="Recruiter profile not found")
     q = db.query(Job).options(joinedload(Job.company))
     if user.role == UserRole.company_admin:
@@ -410,9 +480,12 @@ def create_job(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EMPLOYER_ROLES)),
 ):
-    recruiter = _recruiter_for(db, user)
+    recruiter = _poster_profile(db, user)
     if not recruiter:
         raise HTTPException(status_code=404, detail="Recruiter profile not found")
+    now = datetime.now(timezone.utc)
+    status = _status_for_poster(user, None, payload.status)
+    has_salary = payload.salary_min is not None or payload.salary_max is not None
     job = Job(
         title=payload.title.strip(),
         description=payload.description,
@@ -420,12 +493,18 @@ def create_job(
         recruiter_id=recruiter.id,
         salary_min=payload.salary_min,
         salary_max=payload.salary_max,
+        salary_period=(payload.salary_period or "month") if has_salary else None,
         skills=payload.skills,
         experience_level=payload.experience_level,
         location=payload.location,
+        locality=payload.locality,
+        education=payload.education,
         employment_type=payload.employment_type,
-        status=payload.status,
-        created_at=datetime.now(timezone.utc),
+        status=status,
+        approved_at=now if status == JobStatus.published else None,
+        approved_by_id=user.id if status == JobStatus.published else None,
+        created_at=now,
+        updated_at=now,
     )
     db.add(job)
     db.flush()
@@ -434,6 +513,8 @@ def create_job(
     db.commit()
     db.refresh(job)
     db.refresh(job, ["company"])
+    if job.status == JobStatus.pending:
+        _notify_admins_of_pending(db, job, user)
     return job_to_response(job)
 
 
@@ -451,6 +532,15 @@ def update_job(
     _max = changes.get("salary_max", job.salary_max)
     if _min is not None and _max is not None and _min > _max:
         raise HTTPException(status_code=422, detail="Minimum salary cannot be greater than maximum salary")
+    was_pending = job.status == JobStatus.pending
+    if changes.get("status") is not None:
+        changes["status"] = _status_for_poster(user, job, changes["status"])
+        if changes["status"] == JobStatus.published and not job.approved_at:
+            changes["approved_at"], changes["approved_by_id"] = datetime.now(timezone.utc), user.id
+    elif job.status == JobStatus.rejected and user.role != UserRole.platform_admin:
+        changes["status"] = JobStatus.pending  # editing a rejected job sends it back for review
+    if (_min is not None or _max is not None) and not (changes.get("salary_period") or job.salary_period):
+        changes["salary_period"] = "month"
     before = {k: getattr(job, k) for k in changes}
     for key, value in changes.items():
         setattr(job, key, value)
@@ -460,6 +550,8 @@ def update_job(
           request=request)
     db.commit()
     db.refresh(job)
+    if job.status == JobStatus.pending and not was_pending:
+        _notify_admins_of_pending(db, job, user)
     return job_to_response(job)
 
 
@@ -517,6 +609,9 @@ def apply_job(
         years_experience=payload.years_experience if payload else None,
         cover_letter=payload.cover_letter if payload else None,
         resume_url=resume_ref,
+        education=payload.education if payload else None,
+        expected_salary=payload.expected_salary if payload else None,
+        current_location=payload.current_location.strip() if payload and payload.current_location else None,
     )
     db.add(app)
     try:

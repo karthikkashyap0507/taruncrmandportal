@@ -1,13 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Bookmark, BookmarkCheck, Briefcase, ExternalLink, MapPin, Zap } from "lucide-react";
+import { Bookmark, BookmarkCheck, Briefcase, ExternalLink, GraduationCap, MapPin, Zap } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ApplyDialog } from "@/components/shared/apply-dialog";
-import { formatSalary } from "@/lib/format";
+import { educationLabel, formatPlace, formatSalary } from "@/lib/format";
 import { savedJobsApi } from "@/services/api";
 import { useAuthStore } from "@/store/auth-store";
 import type { Job } from "@/types";
@@ -118,15 +118,21 @@ export function JobCard({ job, index = 0, initialSaved = false, onApplied }: Job
         <div className="flex flex-wrap gap-3 text-sm text-[#94A3B8]">
           <span className="flex items-center gap-1">
             <MapPin className="h-3.5 w-3.5 text-[#3B82F6]" />
-            {job.location || "Remote"}
+            {formatPlace(job.location, job.locality) || "Remote"}
           </span>
           <span className="flex items-center gap-1">
             <Briefcase className="h-3.5 w-3.5 text-[#8B5CF6]" />
             {job.experience_level || "All levels"}
           </span>
+          {job.education && (
+            <span className="flex items-center gap-1">
+              <GraduationCap className="h-3.5 w-3.5 text-[#10B981]" />
+              {educationLabel(job.education)}
+            </span>
+          )}
           {(job.salary_min || job.salary_max) && (
             <span className={`font-semibold ${salaryColors[colorIdx]}`}>
-              {formatSalary(job.salary_min, job.salary_max)}
+              {formatSalary(job.salary_min, job.salary_max, job.salary_period)}
             </span>
           )}
           {job.employment_type && (
