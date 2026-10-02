@@ -7,6 +7,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_owner, require_owner_or_bdm
 from app.core.security import utc
@@ -15,6 +16,7 @@ from app.models import (
     JobStatus, NotifType, Placement, User, UserRole,
 )
 from app.services import ats
+from app.services import portal_sync
 from app.services.activity import diff, log_activity, notify, queue_email
 
 router = APIRouter(prefix="/jobs", tags=["crm-jobs"])
@@ -40,6 +42,7 @@ class JobCreate(BaseModel):
     deadline: Optional[datetime] = None
     portal_job_id: Optional[int] = None
     assigned_to_id: Optional[int] = None
+    publish_on_portal: bool = True
 
     @model_validator(mode="after")
     def ranges(self):
@@ -69,6 +72,7 @@ class JobUpdate(BaseModel):
     status: Optional[JobStatus] = None
     deadline: Optional[datetime] = None
     assigned_to_id: Optional[int] = None
+    publish_on_portal: Optional[bool] = None
 
 
 class ApplicationCreate(BaseModel):
@@ -112,6 +116,12 @@ def _serialize_job(j: CRMJob) -> dict:
         "portal_status": j.portal_status,
         "posted_by": j.posted_by,
         "source": j.source or "crm",
+        "portal_premium": j.portal_premium,
+        "publish_on_portal": bool(j.publish_on_portal) if (j.source or "crm") != "portal" else None,
+        "portal_push_pending": bool(j.portal_push_pending),
+        "portal_push_error": j.portal_push_error,
+        "portal_url": (f"{settings.PORTAL_PUBLIC_URL.rstrip('/')}/jobs/{j.portal_job_id}"
+                       if j.portal_job_id and j.portal_status == "published" else None),
         "assigned_to_id": j.assigned_to_id,
         "created_by_id": j.created_by_id,
         "created_at": j.created_at.isoformat(),
@@ -186,7 +196,7 @@ async def list_jobs(
 @router.post("/", status_code=201)
 async def create_job(payload: JobCreate, request: Request, db: AsyncSession = Depends(get_db),
                      current_user: User = Depends(require_owner_or_bdm)):
-    job = CRMJob(**payload.model_dump(exclude_none=True), created_by_id=current_user.id)
+    job = CRMJob(**payload.model_dump(exclude_none=True), created_by_id=current_user.id, source="crm")
     db.add(job)
     await db.flush()
     log_activity(db, current_user, ActivityType.create, f"Created job {job.title}", "job", job.id, request=request)
@@ -194,7 +204,17 @@ async def create_job(payload: JobCreate, request: Request, db: AsyncSession = De
            f"/jobs/{job.id}", exclude=current_user.id)
     await db.commit()
     await db.refresh(job)
+    await _publish(db, job)
     return _serialize_job(job)
+
+
+async def _publish(db: AsyncSession, job: CRMJob) -> None:
+    """Send the job to the job portal now; if the portal can't be reached it is retried automatically."""
+    if portal_sync.configured() and portal_sync.needs_push(job):
+        job.portal_push_pending = True
+        await portal_sync.push_job(db, job)
+        await db.commit()
+        await db.refresh(job)
 
 
 @router.get("/interviews/all")
@@ -253,6 +273,9 @@ async def update_job(job_id: int, payload: JobUpdate, request: Request, db: Asyn
         notify(db, [job.assigned_to_id], "Job assigned to you", job.title, NotifType.task_assigned,
                f"/jobs/{job.id}", exclude=current_user.id)
     await db.commit()
+    # Portal jobs only follow status changes; CRM jobs are re-published on every edit
+    if changes and ((job.source or "crm") != "portal" or "status" in changes):
+        await _publish(db, job)
     return _serialize_job(job)
 
 
@@ -262,6 +285,13 @@ async def delete_job(job_id: int, request: Request, db: AsyncSession = Depends(g
     job = await _get_job(db, job_id)
     if (await db.execute(select(func.count()).select_from(Placement).where(Placement.job_id == job.id))).scalar():
         raise HTTPException(409, "This job has placements linked to billing and can't be deleted. Close it instead.")
+    if portal_sync.configured() and job.portal_job_id and job.portal_status == "published":
+        # Take it off the public portal first so no orphaned job stays live there
+        job.status = JobStatus.closed
+        if not await portal_sync.push_job(db, job):
+            await db.rollback()
+            raise HTTPException(502, "Couldn't take this job off the job portal, so it wasn't deleted. "
+                                     "Please try again in a minute.")
     for iv in (await db.execute(select(Interview).where(Interview.job_id == job.id))).scalars().all():
         await db.delete(iv)
     log_activity(db, current_user, ActivityType.delete, f"Deleted job {job.title}", "job", job.id, request=request)
@@ -319,6 +349,14 @@ async def update_application_stage(
     job = await _get_job(db, job_id)
     candidate = await db.get(Candidate, app.candidate_id)
     old = ats.change_stage(db, app, stage, current_user.id, note)
+    portal_note = None
+    if app.portal_application_id:
+        state, msg = await portal_sync.push_application_status(app)
+        if state == "refused":
+            await db.rollback()
+            raise HTTPException(409, f"The job portal didn't accept this change, so nothing was changed: {msg}")
+        if state == "pending":
+            portal_note = "Saved. The job portal couldn't be reached; the candidate's portal status will update automatically."
     if candidate and stage in ats.CANDIDATE_STATUS_FOR_STAGE:
         candidate.status = ats.CANDIDATE_STATUS_FOR_STAGE[stage]
         candidate.updated_at = datetime.now(timezone.utc)
@@ -332,11 +370,15 @@ async def update_application_stage(
            f"{job.title}: {old} -> {stage}" + (" - record the placement for billing" if stage == "hired" else ""),
            NotifType.application_stage, f"/jobs/{job.id}", exclude=current_user.id)
     await db.commit()
-    if candidate and candidate.email and stage in ("interview", "offer", "hired"):
+    # Portal applicants are emailed by the portal when their status changes there
+    if candidate and candidate.email and stage in ("interview", "offer", "hired") and not app.portal_application_id:
         from app.services.email import send_candidate_status_email
         await queue_email(send_candidate_status_email, candidate.email, candidate.name,
                           {"offer": "offer extended"}.get(stage, stage), job.title)
-    return _serialize_application(app, candidate)
+    data = _serialize_application(app, candidate)
+    if portal_note:
+        data["portal_note"] = portal_note
+    return data
 
 
 @router.get("/{job_id}/applications/{app_id}/history")

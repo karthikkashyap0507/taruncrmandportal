@@ -1374,19 +1374,27 @@ def phase_c():
     run_check(sec, "X-4", "Job form: education, salary per month/year, city and locality; better filters", job_fields)
 
     def crm_job(portal_id):
-        rows = expect(http.get(C("/jobs/"), params={"limit": 100}, headers=H(T["owner"])), 200).json()["data"]
+        rows = expect(http.get(C("/jobs/"), params={"limit": 200}, headers=H(T["owner"])), 200).json()["data"]
         return next((j for j in rows if j.get("portal_job_id") == portal_id), None)
+
+    def sync_now():
+        return expect(http.post(C("/portal/sync"), headers=H(T["owner"])), 200).json()
 
     def crm_sync():
         st = expect(http.get(C("/portal/status"), headers=H(T["hr"])), 200).json()
         assert st["configured"], st
+        # Free jobs stay on the portal: the HR team only works premium (client-paid) jobs
+        sync_now()
+        assert crm_job(T["job"]) is None, "a free portal job reached the CRM"
+        expect(http.post(P(f"/admin/jobs/{T['job']}/premium"), json={"is_premium": True}, headers=H(T["free"])), 403)
+        expect(http.post(P(f"/admin/jobs/{T['job']}/premium"), json={"is_premium": True}, headers=H(T["admin"])), 200)
         # The scheduler syncs on its own every few seconds here (every 2 minutes in production)
         j = wait_for(lambda: (lambda x: x if x and x["status"] == "open" else None)(crm_job(T["job"])), timeout=40)
-        assert j, f"portal job never reached the CRM: {expect(http.get(C('/portal/status'), headers=H(T['owner'])), 200).json()}"
+        assert j, f"premium portal job never reached the CRM: {expect(http.get(C('/portal/status'), headers=H(T['owner'])), 200).json()}"
         assert (j["education"], j["locality"], j["salary_period"], j["source"]) == ("10th", "JP Nagar", "month", "portal"), j
         assert "freelancer@qamail.in" in (j.get("posted_by") or ""), j
         overview = expect(http.get(C("/analytics/overview"), headers=H(T["owner"])), 200).json()
-        assert overview["jobs"]["open"] >= 2, overview["jobs"]
+        assert overview["jobs"]["open"] >= 1, overview["jobs"]
         detail = wait_for(lambda: (lambda d: d if d["applications"] else None)(
             expect(http.get(C(f"/jobs/{j['id']}"), headers=H(T["owner"])), 200).json()), timeout=20)
         app = detail["applications"][0]
@@ -1397,29 +1405,204 @@ def phase_c():
         # The pipeline follows the portal
         expect(http.patch(P(f"/jobs/applications/{T['app']}"), json={"status": "screening"}, headers=H(T["free"])), 200)
         expect(http.post(C("/portal/sync"), headers=H(T["hr"])), 403)
-        res = expect(http.post(C("/portal/sync"), headers=H(T["owner"])), 200).json()
+        res = sync_now()
         stage = expect(http.get(C(f"/jobs/{j['id']}"), headers=H(T["owner"])), 200).json()["applications"][0]["stage"]
         assert stage == "screening", (stage, res)
-        # A job waiting for approval is "on hold" in the CRM; deleting it on the portal closes it
+        # A premium job waiting for approval is "on hold" in the CRM; deleting it on the portal closes it
         pend = expect(http.post(P("/jobs"), json={"title": "Warehouse Packer", "description": "Pack and label parcels",
                                                    "location": "Bengaluru", "education": "10th"}, headers=H(T["free"])), 201).json()
-        expect(http.post(C("/portal/sync"), headers=H(T["owner"])), 200)
+        expect(http.post(P(f"/admin/jobs/{pend['id']}/premium"), json={"is_premium": True}, headers=H(T["admin"])), 200)
+        sync_now()
         pj = crm_job(pend["id"])
         assert pj and pj["status"] == "on_hold" and pj["portal_status"] == "pending", pj
-        # A CRM user's own status choice survives later syncs
-        expect(http.put(C(f"/jobs/{j['id']}"), json={"status": "filled"}, headers=H(T["owner"])), 200)
         expect(http.delete(P(f"/jobs/{pend['id']}"), headers=H(T["free"])), 204)
-        expect(http.post(C("/portal/sync"), headers=H(T["owner"])), 200)
-        assert crm_job(pend["id"])["status"] == "closed" and crm_job(T["job"])["status"] == "filled"
+        sync_now()
+        gone = [x for x in expect(http.get(C("/jobs/"), params={"search": "Warehouse Packer"}, headers=H(T["owner"])), 200).json()["data"]]
+        assert len(gone) == 1 and gone[0]["status"] == "closed" and gone[0]["portal_job_id"] is None, gone
+        # Filling the position in the CRM closes it on the portal too, and the CRM keeps its own status
+        expect(http.put(C(f"/jobs/{j['id']}"), json={"status": "filled"}, headers=H(T["owner"])), 200)
+        expect(http.get(P(f"/jobs/{T['job']}"), headers=H()), 404)
+        sync_now()
+        assert crm_job(T["job"])["status"] == "filled"
+        # Making a job free again takes it out of the HR team's list
+        expect(http.post(P(f"/admin/jobs/{T['admin_job']}/premium"), json={"is_premium": True}, headers=H(T["admin"])), 200)
+        sync_now()
+        assert crm_job(T["admin_job"])["status"] == "open"
+        expect(http.post(P(f"/admin/jobs/{T['admin_job']}/premium"), json={"is_premium": False}, headers=H(T["admin"])), 200)
+        sync_now()
+        assert crm_job(T["admin_job"])["status"] == "closed"
         st = expect(http.get(C("/portal/status"), headers=H(T["owner"])), 200).json()
         assert st["last_success_at"] and not st["last_error"], st
-        return (f"the approved portal job appeared in the CRM by itself as an open job with education, locality, monthly "
-                f"pay and who posted it; the dashboard's Open Jobs count is {overview['jobs']['open']}; the applicant "
-                "became a CRM candidate with education, expected salary, location and their resume; moving the "
-                "application on the portal moved it in the CRM; a job awaiting approval shows 'on hold' and a deleted "
-                "one is closed; a CRM user's own status is kept; HR can see the sync status but only owner/BDM can "
-                "press Sync now")
-    run_check(sec, "X-5", "Portal jobs and applicants reach the CRM automatically (Open Jobs no longer 0)", crm_sync)
+        return ("free portal jobs stay out of the CRM; once an admin marks a job premium (client pays) it appears in "
+                "the CRM by itself with education, locality, monthly pay and who posted it, and its applicant arrives "
+                "with education, expected salary, location and resume; portal status changes move the CRM pipeline; a "
+                "premium job awaiting approval is 'on hold', a deleted one is closed; marking a job filled in the CRM "
+                "closes it on the portal; making a job free again closes it in the CRM; only owner/BDM can press Sync now")
+    run_check(sec, "X-5", "Premium portal jobs and applicants reach the CRM automatically; free jobs stay out", crm_sync)
+
+    def priority_flow():
+        future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=10)).isoformat()
+        body = {"title": "Picker Packer QAPF", "client_name": "Flipkart Logistics", "location": "Bengaluru",
+                "locality": "Hoskote", "education": "10th", "salary_min": 16000, "salary_max": 19000,
+                "salary_period": "month", "experience_min": 0, "job_type": "full-time", "positions": 25,
+                "description": "Pick, pack and scan orders in a warehouse. Day and night shifts.",
+                "publish_on_portal": True, "deadline": future}
+        expect(http.post(C("/jobs/"), json=body, headers=H(T["hr"])), 403)
+        cj = expect(http.post(C("/jobs/"), json=body, headers=H(T["owner"])), 201).json()
+        # 1. Created in the CRM -> on the portal straight away (no waiting for a sync)
+        assert cj["portal_url"] and not cj["portal_push_pending"], cj
+        pid = cj["portal_job_id"]
+        pub = expect(http.get(P(f"/jobs/{pid}"), headers=H()), 200).json()
+        assert pub["is_premium"] and pub["source"] == "crm" and pub["company"]["name"] == "Flipkart Logistics", pub
+        assert (pub["education"], pub["locality"], pub["salary_period"]) == ("10th", "Hoskote", "month"), pub
+        # 2. Search and filters find it (city spelt 'Bangalore', all filters together)
+        def ids(**params):
+            return {x["id"] for x in expect(http.get(P("/jobs"), params=params, headers=H()), 200).json()}
+        assert pid in ids(location="Bangalore")
+        allf = dict(location="Bengaluru", locality="Hoskote", education="12th", experience="fresher",
+                    employment_type="full_time", min_monthly_salary=15000, max_monthly_salary=20000)
+        assert pid in ids(**allf), "combined filters missed the job"
+        for key, val in (("min_monthly_salary", 20000), ("experience", "3-5"), ("employment_type", "part_time"),
+                         ("locality", "Whitefield"), ("location", "Mumbai")):
+            assert pid not in ids(**{**allf, key: val}), f"filter {key}={val} should exclude the job"
+        # 3. A candidate applies with a resume
+        tok = p_register("Asha Rao", "asha.rao@qamail.in")["access_token"]
+        up = expect(http.post(P("/upload/resume"), files={"file": ("asha.pdf", PDF, "application/pdf")}, headers=H(tok)), 200).json()
+        expect(http.post(P(f"/jobs/{pid}/apply"), json={
+            "full_name": "Asha Rao", "phone": "9876500011", "years_experience": 0, "education": "12th",
+            "expected_salary": 17000, "current_location": "Hoskote, Bengaluru", "resume_url": up["url"]}, headers=H(tok)), 200)
+        pa = expect(http.get(P("/jobs/candidate/my-applications"), headers=H(tok)), 200).json()[0]
+        # 4. Candidate + resume reach the CRM with the right details, once
+        sync_now()
+        sync_now()  # a second sync must not duplicate anything
+        d = expect(http.get(C(f"/jobs/{cj['id']}"), headers=H(T["owner"])), 200).json()
+        assert len(d["applications"]) == 1, d["applications"]
+        a = d["applications"][0]
+        assert (a["candidate_name"], a["candidate_education"], a["candidate_location"], a["candidate_expected_salary"]) == \
+            ("Asha Rao", "12th", "Hoskote, Bengaluru", "₹17,000/month"), a
+        crm_cand = expect(http.get(C(f"/candidates/{a['candidate_id']}"), headers=H(T["owner"])), 200).json()
+        assert crm_cand["resume_url"] and crm_cand["phone"] == "9876500011", crm_cand
+        jobs_named = [x for x in expect(http.get(C("/jobs/"), params={"search": "QAPF", "limit": 50}, headers=H(T["owner"])), 200).json()["data"]]
+        assert len(jobs_named) == 1, jobs_named
+        assert db_rows(SYNC_PORTAL_DB, "SELECT COUNT(*) FROM jobs WHERE crm_job_id=?", (cj["id"],))[0][0] == 1
+        assert db_rows(SYNC_CRM_DB, "SELECT COUNT(*) FROM crm_candidates WHERE email='asha.rao@qamail.in'")[0][0] == 1
+        # 5. Status changed in the CRM -> the candidate sees it on the portal (and is emailed by the portal)
+        expect(http.patch(C(f"/jobs/{cj['id']}/applications/{a['id']}/stage"), params={"stage": "screening"}, headers=H(T["owner"])), 200)
+        expect(http.patch(C(f"/jobs/{cj['id']}/applications/{a['id']}/stage"), params={"stage": "interview"}, headers=H(T["owner"])), 200)
+        mine = expect(http.get(P("/jobs/candidate/my-applications"), headers=H(tok)), 200).json()[0]
+        assert mine["status"] == "interview", mine
+        assert wait_for(lambda: db_rows(SYNC_PORTAL_DB, "SELECT COUNT(*) FROM email_outbox WHERE category='application_status' "
+                                                        "AND to_email='asha.rao@qamail.in'")[0][0] >= 2), "candidate not emailed"
+        # ... and the other way: a status change on the portal reaches the CRM
+        expect(http.patch(P(f"/jobs/applications/{pa['id']}"), json={"status": "offered"}, headers=H(T["admin"])), 200)
+        sync_now()
+        stage = expect(http.get(C(f"/jobs/{cj['id']}"), headers=H(T["owner"])), 200).json()["applications"][0]["stage"]
+        assert stage == "offer", stage
+        # 6. Editing the job in the CRM updates the portal; the deadline passing closes it everywhere
+        expect(http.put(C(f"/jobs/{cj['id']}"), json={"salary_max": 21000}, headers=H(T["owner"])), 200)
+        assert expect(http.get(P(f"/jobs/{pid}"), headers=H()), 200).json()["salary_max"] == 21000
+        past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).isoformat()
+        expect(http.put(C(f"/jobs/{cj['id']}"), json={"deadline": past}, headers=H(T["owner"])), 200)
+        expect(http.get(P(f"/jobs/{pid}"), headers=H()), 404)
+        assert pid not in ids(location="Bengaluru")
+        closed = wait_for(lambda: (lambda x: x if x["status"] == "closed" else None)(
+            expect(http.get(C(f"/jobs/{cj['id']}"), headers=H(T["owner"])), 200).json()), timeout=20)
+        assert closed and db_rows(SYNC_PORTAL_DB, "SELECT status FROM jobs WHERE id=?", (pid,))[0][0] == "closed", closed
+        sync_now()
+        final = expect(http.get(C(f"/jobs/{cj['id']}"), headers=H(T["owner"])), 200).json()
+        assert len(final["applications"]) == 1 and final["applications"][0]["stage"] == "offer", final["applications"]
+        return ("job created in the CRM was live on the portal immediately (premium, client name, education, locality, "
+                "monthly pay); found by search with 'Bangalore' and with all filters combined, and each filter excludes "
+                "it when it doesn't match; candidate applied with resume; after two syncs the CRM has exactly 1 job, 1 "
+                "candidate (with resume, phone, education, location, expected pay) and 1 application; CRM stage changes "
+                "showed on the candidate's portal dashboard and emailed them; a portal status change reached the CRM; a "
+                "CRM salary edit updated the portal; the deadline passing closed the job on both sides")
+    run_check(sec, "X-7", "PRIORITY FLOW: CRM job -> portal -> search -> apply -> CRM -> status both ways, no duplicates", priority_flow)
+
+    def filters_and_salary():
+        jobs = {}
+        for key, body in {
+            "entry": {"title": "Data Entry Operator QAF", "location": "Mysuru", "education": "12th",
+                      "salary_min": 15000, "salary_max": 18000, "salary_period": "month",
+                      "experience_level": "Fresher", "employment_type": "part_time"},
+            "acct": {"title": "Accountant QAF", "location": "Bengaluru", "locality": "Koramangala", "education": "graduate",
+                     "salary_min": 360000, "salary_max": 480000, "salary_period": "year",
+                     "experience_level": "2-4 years", "employment_type": "full_time"},
+            "sales": {"title": "Sales Executive QAF", "location": "Bangalore", "locality": "Whitefield", "education": "12th",
+                      "salary_min": 20000, "salary_max": 25000, "salary_period": "month",
+                      "experience_level": "1-3 years", "employment_type": "full_time"},
+        }.items():
+            jobs[key] = expect(http.post(P("/jobs"), json={**body, "description": "QA filter test job"},
+                                         headers=H(T["admin"])), 201).json()["id"]
+
+        def ids(**params):
+            return {x["id"] for x in expect(http.get(P("/jobs"), params={"q": "QAF", **params}, headers=H()), 200).json()}
+        E, A, S = jobs["entry"], jobs["acct"], jobs["sales"]
+        checks = {
+            "min pay 28k/month (yearly 4.8L = 40k/month counts)": (ids(min_monthly_salary=28000), {A}),
+            "min pay 1L/month (raw 4,80,000 must not match)": (ids(min_monthly_salary=100000), set()),
+            "max pay 20k/month": (ids(max_monthly_salary=20000), {E, S}),
+            "city Mysore = Mysuru": (ids(location="Mysore"), {E}),
+            "city Bengaluru = Bangalore": (ids(location="Bengaluru"), {A, S}),
+            "area Whitefield": (ids(locality="Whitefield"), {S}),
+            "fresher": (ids(experience="fresher"), {E}),
+            "1-3 years": (ids(experience="1-3"), {A, S}),
+            "job type part-time or contract": (ids(employment_type="part_time,contract"), {E}),
+            "qualification 12th": (ids(education="12th"), {E, S}),
+            "Bengaluru + 12th + 1-3 years": (ids(location="Bengaluru", education="12th", experience="1-3"), {S}),
+        }
+        bad = {name: (sorted(got), sorted(want)) for name, (got, want) in checks.items() if got != want}
+        assert not bad, bad
+        order = [x["id"] for x in expect(http.get(P("/jobs"), params={"q": "QAF", "sort": "salary_high"}, headers=H()), 200).json()]
+        assert order == [A, S, E], order
+        jobs_row = expect(http.get(P(f"/jobs/{A}"), headers=H()), 200).json()
+        assert (jobs_row["salary_min"], jobs_row["salary_period"]) == (360000, "year")
+        return (f"{len(checks)} filter checks pass on the API (qualification, city with other spellings, area, "
+                "experience range, several job types, monthly pay) including combinations; pay filters convert yearly "
+                "salaries to monthly (4.8L/year = 40k/month) and never compare raw yearly numbers; 'highest pay' sorting "
+                "uses monthly pay; job salary and the candidate's expected salary are separate fields")
+    run_check(sec, "X-8", "Job filters work alone and together; monthly vs yearly salary handled correctly", filters_and_salary)
+
+    def id_security():
+        other = p_register("Other Recruiter", "other.rec@qamail.in", "recruiter", "Other Agency")["access_token"]
+        jid, aid = T["job"], T["app"]
+        probes = {
+            "read another recruiter's applicants": http.get(P(f"/jobs/{jid}/applications"), headers=H(other)),
+            "edit another recruiter's job": http.patch(P(f"/jobs/{jid}"), json={"title": "Hacked title"}, headers=H(other)),
+            "delete another recruiter's job": http.delete(P(f"/jobs/{jid}"), headers=H(other)),
+            "change another recruiter's applicant status": http.patch(P(f"/jobs/applications/{aid}"), json={"status": "rejected"}, headers=H(other)),
+            "read another recruiter's applicant history": http.get(P(f"/jobs/applications/{aid}/history"), headers=H(other)),
+            "read another recruiter's applicant messages": http.get(P(f"/messages/applications/{aid}"), headers=H(other)),
+            "approve jobs (admin only)": http.post(P(f"/admin/jobs/{jid}/approve"), headers=H(other)),
+            "mark jobs premium (admin only)": http.post(P(f"/admin/jobs/{jid}/premium"), json={"is_premium": True}, headers=H(other)),
+            "publish a CRM job without the key": httpx.put(f"http://127.0.0.1:{PORTAL_PORT}/api/v1/integrations/crm/jobs/by-crm/999", json={"title": "x y"}),
+            "set an application status without the key": httpx.post(f"http://127.0.0.1:{PORTAL_PORT}/api/v1/integrations/crm/applications/{aid}/status", json={"status": "hired"}),
+        }
+        denied = {k: r.status_code for k, r in probes.items() if r.status_code in (401, 403, 404, 405)}
+        allowed = {k: r.status_code for k, r in probes.items() if k not in denied}
+        assert not allowed, allowed
+        bad_input = httpx.put(f"http://127.0.0.1:{PORTAL_PORT}/api/v1/integrations/crm/jobs/by-crm/999",
+                              json={"title": "Bad", "education": "phd"}, headers={"X-Integration-Key": QA_INTEGRATION_KEY})
+        assert bad_input.status_code == 422, bad_input.text
+        expect(http.post(C("/jobs/"), json={"title": "Bad edu", "education": "phd"}, headers=H(T["owner"])), 422)
+        import re
+        leaks = []
+        for app_dir in (os.path.join(ROOT, "frontend"), os.path.join(ROOT, "crm", "frontend")):
+            for dirpath, dirs, files in os.walk(app_dir):
+                dirs[:] = [d for d in dirs if d not in ("node_modules", ".next")]
+                for name in files:
+                    if name.endswith((".ts", ".tsx", ".js")) and not name.endswith(".config.js"):
+                        text = open(os.path.join(dirpath, name), encoding="utf-8", errors="ignore").read()
+                        if re.search(r"INTEGRATION_KEY|SECRET_KEY|SMTP_PASS|ADZUNA_APP_KEY|OPENAI_API_KEY", text):
+                            leaks.append(os.path.relpath(os.path.join(dirpath, name), ROOT))
+                        leaks += [f"{name}: {v}" for v in re.findall(r"NEXT_PUBLIC_[A-Z_]+", text)
+                                  if v not in ("NEXT_PUBLIC_API_URL", "NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_WS_URL", "NEXT_PUBLIC_CRM_API_URL")]
+        assert not leaks, leaks
+        return (f"{len(denied)} cross-account and unauthenticated attempts were refused ({', '.join(sorted(set(map(str, denied.values()))))}): "
+                "another recruiter can't read, edit, delete or move a job's applicants by changing IDs, only admins "
+                "approve or set premium, the CRM link needs its key; bad input -> 422 on both apps; no secrets in "
+                "browser code (only the public API and site addresses)")
+    run_check(sec, "X-9", "API security: no access to others' jobs/candidates by changing IDs; secrets stay server-side", id_security)
 
     def link_security():
         base = f"http://127.0.0.1:{PORTAL_PORT}/api/v1/integrations/crm/jobs"
@@ -1428,9 +1611,9 @@ def phase_c():
         via_site = httpx.get(base, headers={"X-Integration-Key": QA_INTEGRATION_KEY, "X-Forwarded-For": "203.0.113.9"}).status_code
         ok = httpx.get(base, headers={"X-Integration-Key": QA_INTEGRATION_KEY}).status_code
         assert (no_key, wrong, via_site, ok) == (403, 403, 404, 200), (no_key, wrong, via_site, ok)
-        return ("the portal's CRM feed refuses requests without the key (403) or with a wrong key (403), and refuses "
+        return ("the portal's CRM link refuses requests without the key (403) or with a wrong key (403), and refuses "
                 "anything arriving through the public website even with the right key (404); only the CRM on the same "
-                "server can read it")
+                "server can use it")
     run_check(sec, "X-6", "The portal-CRM link is private", link_security)
 
     portal_sync_srv.stop()

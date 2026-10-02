@@ -43,7 +43,11 @@ async def search_all_jobs(
     db: Session = Depends(get_db),
 ):
     # Internal jobs
-    query = db.query(Job).options(joinedload(Job.company)).filter(Job.status == JobStatus.published)
+    from datetime import datetime, timezone
+    from app.api.v1.jobs import job_to_response
+    query = db.query(Job).options(joinedload(Job.company)).filter(
+        Job.status == JobStatus.published,
+        (Job.expires_at.is_(None)) | (Job.expires_at >= datetime.now(timezone.utc)))
     if q:
         query = query.filter(Job.title.ilike(f"%{q}%") | Job.description.ilike(f"%{q}%"))
     if location:
@@ -53,25 +57,7 @@ async def search_all_jobs(
     if salary_min:
         query = query.filter(Job.salary_min >= salary_min)
 
-    internal_jobs_raw = query.limit(20).all()
-    internal_jobs = [
-        JobResponse(
-            id=job.id,
-            company_id=job.company_id,
-            recruiter_id=job.recruiter_id,
-            title=job.title,
-            description=job.description,
-            salary_min=job.salary_min,
-            salary_max=job.salary_max,
-            skills=job.skills,
-            experience_level=job.experience_level,
-            location=job.location,
-            employment_type=job.employment_type,
-            status=job.status,
-            company=CompanyResponse.model_validate(job.company) if job.company else None,
-        )
-        for job in internal_jobs_raw
-    ]
+    internal_jobs = [job_to_response(job) for job in query.order_by(Job.id.desc()).limit(20).all()]
 
     # External jobs via Adzuna
     external_jobs = []

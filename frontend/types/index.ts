@@ -63,7 +63,11 @@ export interface Job {
   employment_type?: string;
   status: JobStatus;
   review_note?: string | null;
+  is_premium?: boolean;
+  source?: "portal" | "crm";
+  expires_at?: string | null;
   created_at?: string;
+  updated_at?: string;
   company?: Company;
 }
 

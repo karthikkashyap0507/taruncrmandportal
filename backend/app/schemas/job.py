@@ -221,6 +221,10 @@ class JobResponse(BaseModel):
     employment_type: Optional[str]
     status: JobStatus
     review_note: Optional[str] = None
+    is_premium: bool = False
+    source: Optional[str] = None
+    expires_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     company: Optional[CompanyResponse] = None
     model_config = {"from_attributes": True}

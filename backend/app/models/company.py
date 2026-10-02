@@ -13,6 +13,8 @@ class Company(Base):
     website: Mapped[str | None] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text)
     industry: Mapped[str | None] = mapped_column(String(100))
+    # Set for client companies the CRM publishes jobs for, so employer accounts can't manage them
+    external_ref: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
     jobs = relationship("Job", back_populates="company")
     recruiters = relationship("Recruiter", back_populates="company")

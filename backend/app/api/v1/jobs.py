@@ -29,6 +29,7 @@ from app.schemas.job import (
     JobUpdate,
 )
 from app.services import ats
+from app.services.job_rules import EXPERIENCE_BUCKETS, city_terms, parse_min_years
 from app.services.audit import audit
 
 logger = logging.getLogger(__name__)
@@ -146,9 +147,32 @@ def job_to_response(job: Job) -> JobResponse:
         employment_type=job.employment_type,
         status=job.status,
         review_note=job.review_note,
+        is_premium=bool(job.is_premium),
+        source=job.source or "portal",
+        expires_at=job.expires_at,
         created_at=job.created_at,
+        updated_at=job.updated_at,
         company=CompanyResponse.model_validate(job.company) if job.company else None,
     )
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _is_open(job: Job) -> bool:
+    """Live and not past its closing date (dates are stored as UTC)."""
+    if job.status != JobStatus.published:
+        return False
+    if job.expires_at is None:
+        return True
+    exp = job.expires_at if job.expires_at.tzinfo else job.expires_at.replace(tzinfo=timezone.utc)
+    return exp >= _now()
+
+
+def _monthly(col):
+    """A salary column as rupees per month (yearly salaries divided by 12)."""
+    return case((Job.salary_period == "month", cast(col, Float)), else_=cast(col, Float) / 12.0)
 
 
 def _build_app_response(app: Application) -> ApplicationResponse:
@@ -280,6 +304,9 @@ def list_jobs(
     salary_min: int | None = None,
     salary_max: int | None = None,
     min_monthly_salary: int | None = Query(None, ge=0, description="Jobs paying at least this many rupees a month"),
+    max_monthly_salary: int | None = Query(None, ge=0, description="Jobs whose pay starts at or below this per month"),
+    experience: str | None = Query(None, description="fresher | 1-3 | 3-5 | 5-8 | 8+"),
+    sort: str = Query("newest", description="newest | oldest | salary_high | salary_low | az | za"),
     education: str | None = Query(None, description="The candidate's qualification; shows jobs open to it"),
     locality: str | None = None,
     skills: str | None = None,
@@ -287,7 +314,8 @@ def list_jobs(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Job).options(joinedload(Job.company)).filter(Job.status == JobStatus.published)
+    query = db.query(Job).options(joinedload(Job.company)).filter(
+        Job.status == JobStatus.published, (Job.expires_at.is_(None)) | (Job.expires_at >= _now()))
     if q:
         query = query.filter(
             Job.title.ilike(f"%{q}%") |
@@ -296,7 +324,12 @@ def list_jobs(
             Job.locality.ilike(f"%{q}%")
         )
     if location:
-        query = query.filter(Job.location.ilike(f"%{location}%") | Job.locality.ilike(f"%{location}%"))
+        terms = city_terms(location)
+        cond = None
+        for term in terms:
+            c = Job.location.ilike(f"%{term}%") | Job.locality.ilike(f"%{term}%")
+            cond = c if cond is None else (cond | c)
+        query = query.filter(cond)
     if locality:
         query = query.filter(Job.locality.ilike(f"%{locality}%"))
     if education and education in EDUCATION_RANK:
@@ -305,14 +338,24 @@ def list_jobs(
         query = query.filter(Job.education.in_(allowed) | Job.education.is_(None))
     if min_monthly_salary is not None:
         top = func.coalesce(Job.salary_max, Job.salary_min)
-        monthly = case((Job.salary_period == "month", cast(top, Float)), else_=cast(top, Float) / 12.0)
-        query = query.filter(top.isnot(None), monthly >= min_monthly_salary)
+        query = query.filter(top.isnot(None), _monthly(top) >= min_monthly_salary)
+    if max_monthly_salary is not None:
+        bottom = func.coalesce(Job.salary_min, Job.salary_max)
+        query = query.filter(bottom.is_(None) | (_monthly(bottom) <= max_monthly_salary))
     if remote:
         query = query.filter(Job.location.ilike("%remote%"))
     if employment_type:
-        query = query.filter(Job.employment_type.ilike(f"%{employment_type}%"))
+        types = [t.strip() for t in employment_type.split(",") if t.strip()]
+        if types:
+            query = query.filter(Job.employment_type.in_(types))
     if experience_level and experience_level != "all":
         query = query.filter(Job.experience_level.ilike(f"%{experience_level}%"))
+    if experience in EXPERIENCE_BUCKETS:
+        low, high = EXPERIENCE_BUCKETS[experience]
+        cond = Job.experience_min_years >= low
+        if high is not None:
+            cond = cond & (Job.experience_min_years <= high)
+        query = query.filter(cond | Job.experience_min_years.is_(None))
     if salary_min is not None:
         query = query.filter((Job.salary_min >= salary_min) | (Job.salary_min.is_(None)))
     if salary_max is not None:
@@ -328,7 +371,15 @@ def list_jobs(
                 | Job.title.ilike(like)
                 | Job.description.ilike(like)
             )
-    jobs = query.order_by(Job.id.desc()).offset(skip).limit(limit).all()
+    pay = _monthly(func.coalesce(Job.salary_max, Job.salary_min))
+    order = {
+        "oldest": [Job.id.asc()],
+        "salary_high": [pay.is_(None), pay.desc(), Job.id.desc()],
+        "salary_low": [pay.is_(None), _monthly(func.coalesce(Job.salary_min, Job.salary_max)).asc(), Job.id.desc()],
+        "az": [func.lower(Job.title).asc()],
+        "za": [func.lower(Job.title).desc()],
+    }.get(sort, [Job.id.desc()])
+    jobs = query.order_by(*order).offset(skip).limit(limit).all()
     return [job_to_response(j) for j in jobs]
 
 
@@ -467,8 +518,8 @@ def get_job(job_id: int, db: Session = Depends(get_db), user: User | None = Depe
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     # Drafts and closed jobs are only visible to the people who manage them
-    if job.status != JobStatus.published and not (user and user.role in EMPLOYER_ROLES
-                                                  and _can_manage(user, _recruiter_for(db, user), job)):
+    if not _is_open(job) and not (user and user.role in EMPLOYER_ROLES
+                                  and _can_manage(user, _recruiter_for(db, user), job)):
         raise HTTPException(status_code=404, detail="Job not found")
     return job_to_response(job)
 
@@ -496,6 +547,7 @@ def create_job(
         salary_period=(payload.salary_period or "month") if has_salary else None,
         skills=payload.skills,
         experience_level=payload.experience_level,
+        experience_min_years=parse_min_years(payload.experience_level),
         location=payload.location,
         locality=payload.locality,
         education=payload.education,
@@ -541,6 +593,8 @@ def update_job(
         changes["status"] = JobStatus.pending  # editing a rejected job sends it back for review
     if (_min is not None or _max is not None) and not (changes.get("salary_period") or job.salary_period):
         changes["salary_period"] = "month"
+    if "experience_level" in changes:
+        changes["experience_min_years"] = parse_min_years(changes["experience_level"])
     before = {k: getattr(job, k) for k in changes}
     for key, value in changes.items():
         setattr(job, key, value)
@@ -590,6 +644,8 @@ def apply_job(
     ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    if not _is_open(job):
+        raise HTTPException(status_code=410, detail="This job has closed and is no longer accepting applications")
     candidate = db.query(Candidate).filter(Candidate.user_id == user.id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate profile not found")
@@ -640,7 +696,8 @@ def apply_job(
         recruiter_user = db.query(User).join(Recruiter, Recruiter.user_id == User.id).filter(
             Recruiter.id == job.recruiter_id
         ).first()
-        if recruiter_user:
+        # CRM-published jobs are worked in the CRM, which receives the applicant on its next sync
+        if recruiter_user and job.source != "crm":
             send_recruiter_new_application_email(
                 to_email=recruiter_user.email,
                 recruiter_name=recruiter_user.name,

@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models import (
     Agreement, AgreementStatus, Candidate, Company, CRMJob, FollowUp, Interview, InterviewStatus, Invoice,
-    InvoiceStatus, Lead, NotifType, Placement, PlacementStatus, User, UserRole,
+    InvoiceStatus, JobStatus, Lead, NotifType, Placement, PlacementStatus, User, UserRole,
 )
 from app.services import email as mail
 from app.services import outbox
@@ -108,6 +108,15 @@ async def run_once() -> dict:
                 notify(db, owners, f"MOU expired: {a.title}", "Renew it to keep billing new placements",
                        NotifType.system, "/agreements")
         stats["agreements_expired"] = len(agrs)
+
+        # Jobs past their deadline close (and come off the job portal on the next sync)
+        expired_jobs = (await db.execute(select(CRMJob).where(
+            CRMJob.status == JobStatus.open, CRMJob.deadline.isnot(None), CRMJob.deadline < now))).scalars().all()
+        for job in expired_jobs:
+            job.status, job.updated_at = JobStatus.closed, now
+            if job.portal_job_id or job.publish_on_portal:
+                job.portal_push_pending = True
+        stats["jobs_expired"] = len(expired_jobs)
         await db.commit()
 
     for func, args in emails:

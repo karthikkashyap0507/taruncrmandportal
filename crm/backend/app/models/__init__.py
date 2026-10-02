@@ -372,6 +372,13 @@ class CRMJob(Base):
     portal_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     portal_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     posted_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # portal poster, for portal jobs
+    portal_premium: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)  # portal jobs: client-paid?
+    # When the portal created the job: tells a reused portal id (after a deletion) apart from the original
+    portal_created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # CRM jobs: show it on the public job portal (pushed on save; retried until it succeeds)
+    publish_on_portal: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    portal_push_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", index=True)
+    portal_push_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     assigned_to_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("crm_users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -396,6 +403,8 @@ class Application(Base):
     applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, default=utcnow)
     portal_application_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     portal_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    portal_push_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", index=True)
+    portal_push_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     job: Mapped["CRMJob"] = relationship("CRMJob", back_populates="applications")

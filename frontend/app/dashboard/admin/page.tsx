@@ -61,7 +61,7 @@ function Overview() {
   const cards: [string, string][] = [
     ["Users", "total_users"], ["Candidates", "total_candidates"], ["Recruiters", "total_recruiters"],
     ["Companies", "total_companies"], ["Jobs", "total_jobs"], ["Published jobs", "published_jobs"],
-    ["Jobs awaiting approval", "pending_jobs"],
+    ["Jobs awaiting approval", "pending_jobs"], ["Live premium jobs", "premium_jobs"],
     ["Applications", "total_applications"], ["Failed emails", "failed_emails"],
     ["New enquiries", "new_enquiries"], ["Job-alert subscribers", "newsletter_subscribers"],
   ];
@@ -154,10 +154,11 @@ const JOB_STATUS_LABEL: Record<string, string> = {
 
 function JobsTab() {
   const [status, setStatus] = useState("pending");
+  const [plan, setPlan] = useState("");
   const [page, setPage] = useState(0);
   const [open, setOpen] = useState<number | null>(null);
   const { data, reload } = useLoader<Row[]>(
-    () => adminApi.listJobs({ status: status || undefined, skip: page * 50, limit: 50 }), [status, page]);
+    () => adminApi.listJobs({ status: status || undefined, plan: plan || undefined, skip: page * 50, limit: 50 }), [status, plan, page]);
   const rows = data || [];
   const reject = async (j: Row) => {
     const reason = prompt(`Why is "${j.title}" being rejected? The poster sees this and can fix the job.`);
@@ -174,12 +175,18 @@ function JobsTab() {
             {label}
           </button>
         ))}
+        <select value={plan} onChange={e => { setPlan(e.target.value); setPage(0); }} aria-label="Plan"
+                className="rounded-lg border border-white/10 bg-[#0F172A] px-2 py-1.5 text-xs text-white">
+          <option value="">All plans</option>
+          <option value="premium">Premium (client pays)</option>
+          <option value="free">Free</option>
+        </select>
         <Link href="/dashboard/recruiter" className="ml-auto">
           <Button variant="outline" className="border-white/10"><Plus className="mr-2 h-4 w-4" /> Post a job</Button>
         </Link>
       </div>
-      <p className="text-xs text-[#64748B]">Jobs posted by recruiters and freelancers stay hidden from candidates until you approve them. Click a row to read the full job.</p>
-      <Table head={["Job", "Posted by", "Location", "Pay", "Status", ""]} empty={rows.length === 0}>
+      <p className="text-xs text-[#64748B]">Jobs posted by recruiters and freelancers stay hidden from candidates until you approve them. Premium jobs are ones a client pays for: only they go to the CRM for the HR team. Jobs created in the CRM are premium automatically. Click a row to read the full job.</p>
+      <Table head={["Job", "Posted by", "Location", "Pay", "Plan", "Status", ""]} empty={rows.length === 0}>
         {rows.map(j => (
           <Fragment key={j.id}>
             <tr onClick={() => setOpen(open === j.id ? null : j.id)} className="cursor-pointer border-b border-white/5 align-top hover:bg-white/5">
@@ -193,6 +200,16 @@ function JobsTab() {
               </td>
               <td className="px-4 py-3 text-xs text-[#94A3B8]">{formatPlace(j.location, j.locality) || "—"}</td>
               <td className="px-4 py-3 text-xs text-[#94A3B8] whitespace-nowrap">{formatSalary(j.salary_min, j.salary_max, j.salary_period)}</td>
+              <td className="px-4 py-3 text-xs whitespace-nowrap" onClick={ev => ev.stopPropagation()}>
+                {j.is_premium
+                  ? <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-amber-300">Premium{j.source === "crm" ? " · CRM" : ""}</span>
+                  : <span className="text-[#94A3B8]">Free</span>}
+                {j.source !== "crm" && (
+                  <button onClick={() => act(() => adminApi.setJobPremium(j.id, !j.is_premium), reload,
+                    j.is_premium ? `Make "${j.title}" a free job? It will be closed in the CRM.` : `Mark "${j.title}" as premium (client pays)? It will be sent to the CRM.`)}
+                    className="ml-2 text-[#3B82F6] hover:underline">{j.is_premium ? "Make free" : "Make premium"}</button>
+                )}
+              </td>
               <td className={`px-4 py-3 text-xs whitespace-nowrap ${j.status === "pending" ? "text-yellow-400" : j.status === "published" ? "text-green-400" : j.status === "rejected" ? "text-red-400" : "text-[#94A3B8]"}`}>
                 {JOB_STATUS_LABEL[j.status] || j.status}
               </td>
@@ -212,7 +229,7 @@ function JobsTab() {
             </tr>
             {open === j.id && (
               <tr className="border-b border-white/5">
-                <td colSpan={6} className="px-4 pb-4 text-sm text-[#CBD5E1]">
+                <td colSpan={7} className="px-4 pb-4 text-sm text-[#CBD5E1]">
                   <div className="mb-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-[#94A3B8]">
                     <span>Qualification: {educationLabel(j.education) || "Not stated"}</span>
                     <span>Experience: {j.experience_level || "Not stated"}</span>

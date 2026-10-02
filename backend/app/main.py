@@ -16,6 +16,7 @@ from app.core.database import Base, SessionLocal, engine
 from app.core.files import RESUME_PREFIX, private_dir
 from app.core.middleware import RequestContextMiddleware, install_error_handlers
 from app.core.schema import ensure_schema
+from app.services.job_rules import parse_min_years
 from app.models import *  # noqa: F401, F403
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -124,6 +125,13 @@ def _migrate_legacy_data() -> None:
         # Jobs that were already live before the approval step existed count as approved
         conn.execute(text("UPDATE jobs SET approved_at = created_at "
                           "WHERE approved_at IS NULL AND status IN ('published', 'closed')"))
+        conn.execute(text("UPDATE jobs SET source = 'portal' WHERE source IS NULL"))
+        rows = conn.execute(text("SELECT id, experience_level FROM jobs WHERE experience_min_years IS NULL "
+                                 "AND experience_level IS NOT NULL")).all()
+        for job_id, level in rows:
+            years = parse_min_years(level)
+            if years is not None:
+                conn.execute(text("UPDATE jobs SET experience_min_years = :y WHERE id = :i"), {"y": years, "i": job_id})
         # Older jobs didn't say whether the salary was monthly or yearly; nobody pays under 1 lakh a year
         conn.execute(text("UPDATE jobs SET salary_period = CASE WHEN COALESCE(salary_max, salary_min) < 100000 "
                           "THEN 'month' ELSE 'year' END "

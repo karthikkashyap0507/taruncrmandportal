@@ -70,6 +70,10 @@ module.exports = {
       cwd: "$REPO/frontend",
       script: "$REPO/frontend/node_modules/next/dist/bin/next",
       args: "start -p 3001 -H 127.0.0.1",
+      env: {
+        // Server-rendered pages (jobs list, job pages, sitemap) call the API inside the server
+        API_INTERNAL_URL: "http://127.0.0.1:8000/api/v1",
+      },
     },
     {
       name: "crm-web",

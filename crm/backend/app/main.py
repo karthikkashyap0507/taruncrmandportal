@@ -73,6 +73,12 @@ def _migrate_legacy_data() -> None:
         for cid, phone in rows:
             conn.execute(text("UPDATE crm_candidates SET phone_normalized = :n WHERE id = :i"),
                          {"n": normalize_phone(phone), "i": cid})
+        # Once: jobs that existed before portal publishing was added stay internal until someone
+        # ticks "Publish on the job portal"; new CRM jobs publish by default.
+        if not conn.execute(text("SELECT 1 FROM crm_sync_state WHERE name = 'migration:publish_default'")).first():
+            conn.execute(text("UPDATE crm_jobs SET publish_on_portal = 0 WHERE portal_job_id IS NULL "
+                              "AND (source IS NULL OR source != 'portal')"))
+            conn.execute(text("INSERT INTO crm_sync_state (name) VALUES ('migration:publish_default')"))
     if moved:
         logger.info("moved %s resume(s) to private storage", moved)
 

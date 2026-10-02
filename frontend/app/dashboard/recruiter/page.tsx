@@ -348,9 +348,12 @@ export default function RecruiterDashboardPage() {
                             {formatPlace(job.location, job.locality) || "Location not set"} • {job.employment_type?.replace("_"," ") || "Full Time"}
                           </CardDescription>
                         </div>
-                        <Badge className={(JOB_STATUS[job.status] || JOB_STATUS.draft).cls}>
-                          {(JOB_STATUS[job.status] || JOB_STATUS.draft).label}
-                        </Badge>
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge className={(JOB_STATUS[job.status] || JOB_STATUS.draft).cls}>
+                            {(JOB_STATUS[job.status] || JOB_STATUS.draft).label}
+                          </Badge>
+                          {job.is_premium && <Badge className="bg-amber-500/20 text-amber-300">Premium</Badge>}
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent>

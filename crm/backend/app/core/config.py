@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     # Empty = automatic sync is off.
     PORTAL_INTEGRATION_KEY: str = ""
     PORTAL_SYNC_INTERVAL_SECONDS: int = 120
+    # Public address of the job portal, for "view on portal" links
+    PORTAL_PUBLIC_URL: str = "https://www.jobsnexgen.com"
     PORTAL_RECRUITER_PASSWORD: str = ""
 
     # Frontend

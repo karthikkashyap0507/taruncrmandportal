@@ -56,6 +56,7 @@ class AdminStats(BaseModel):
     published_jobs: int
     total_applications: int
     pending_jobs: int = 0
+    premium_jobs: int = 0
     failed_emails: int = 0
     new_enquiries: int = 0
     newsletter_subscribers: int = 0
@@ -76,6 +77,7 @@ def admin_stats(db: Session = Depends(get_db), _: User = Depends(AdminUser)):
         published_jobs=db.query(Job).filter(Job.status == JobStatus.published).count(),
         total_applications=db.query(Application).count(),
         pending_jobs=db.query(Job).filter(Job.status == JobStatus.pending).count(),
+        premium_jobs=db.query(Job).filter(Job.is_premium.is_(True), Job.status == JobStatus.published).count(),
         failed_emails=db.query(EmailOutbox).filter(EmailOutbox.status.in_(["failed", "dead"])).count(),
         new_enquiries=db.query(ContactMessage).filter(ContactMessage.status == "new").count(),
         newsletter_subscribers=db.query(NewsletterSubscriber).filter(
@@ -119,6 +121,9 @@ def delete_user(user_id: int, request: Request, db: Session = Depends(get_db), a
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.email.endswith("@jobsnexgen.system"):
+        raise HTTPException(status_code=400, detail="This is the system account the CRM publishes client jobs "
+                                                    "under; close jobs from the CRM instead")
     _deactivate(db, user)
     audit(db, "admin.user_deactivated", actor=admin, entity_type="user", entity_id=user.id,
           details={"email": user.email, "role": user.role.value}, request=request)
@@ -193,6 +198,7 @@ def delete_company(company_id: int, request: Request, db: Session = Depends(get_
 @router.get("/jobs")
 def list_all_jobs(
     status: Optional[JobStatus] = None,
+    plan: Optional[str] = Query(None, description="premium | free"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -201,6 +207,8 @@ def list_all_jobs(
     q = db.query(Job).options(joinedload(Job.company), joinedload(Job.recruiter).joinedload(Recruiter.user))
     if status:
         q = q.filter(Job.status == status)
+    if plan in ("premium", "free"):
+        q = q.filter(Job.is_premium.is_(plan == "premium"))
     jobs = q.order_by(Job.id.desc()).offset(skip).limit(limit).all()
     return [{
         "id": j.id, "title": j.title, "status": j.status, "company_id": j.company_id,
@@ -212,7 +220,28 @@ def list_all_jobs(
         "salary_period": j.salary_period or ("year" if (j.salary_min or j.salary_max) else None),
         "employment_type": j.employment_type, "experience_level": j.experience_level,
         "description": j.description, "review_note": j.review_note, "created_at": j.created_at,
+        "is_premium": bool(j.is_premium), "source": j.source or "portal", "expires_at": j.expires_at,
     } for j in jobs]
+
+
+class PremiumBody(BaseModel):
+    is_premium: bool
+
+
+@router.post("/jobs/{job_id}/premium")
+def set_job_plan(job_id: int, body: PremiumBody, request: Request, db: Session = Depends(get_db),
+                 admin: User = Depends(AdminUser)):
+    """Premium jobs are ones a client pays for; only they are sent to the CRM for the HR team."""
+    job = db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.source == "crm" and not body.is_premium:
+        raise HTTPException(status_code=409, detail="Jobs published from the CRM are client jobs and stay premium")
+    job.is_premium = body.is_premium
+    audit(db, "admin.job_plan_changed", actor=admin, entity_type="job", entity_id=job.id,
+          details={"title": job.title, "plan": "premium" if body.is_premium else "free"}, request=request)
+    db.commit()
+    return {"id": job.id, "is_premium": job.is_premium}
 
 
 def _review(db: Session, job_id: int, approve: bool, note: Optional[str], admin: User, request: Request) -> dict:

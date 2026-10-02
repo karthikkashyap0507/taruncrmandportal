@@ -106,7 +106,7 @@ api.interceptors.response.use(
 
 // Jobs API
 export const jobsApi = {
-  list: (params?: { q?: string; location?: string; employment_type?: string; experience_level?: string; salary_min?: number; salary_max?: number; remote?: boolean; skip?: number; limit?: number }) =>
+  list: (params?: Record<string, string | number | boolean | undefined>) =>
     api.get<Job[]>("/jobs", { params }),
   get: (id: number) => api.get<Job>(`/jobs/${id}`),
   create: (data: JobCreate) => api.post<Job>("/jobs", data),
@@ -186,9 +186,10 @@ export const adminApi = {
   unlockUser: (id: number) => api.post(`/admin/users/${id}/unlock`),
   listCompanies: (params?: { skip?: number; limit?: number }) => api.get("/admin/companies", { params }),
   deleteCompany: (id: number) => api.delete(`/admin/companies/${id}`),
-  listJobs: (params?: { status?: string; skip?: number; limit?: number }) => api.get("/admin/jobs", { params }),
+  listJobs: (params?: { status?: string; plan?: string; skip?: number; limit?: number }) => api.get("/admin/jobs", { params }),
   approveJob: (id: number) => api.post(`/admin/jobs/${id}/approve`),
   rejectJob: (id: number, reason: string) => api.post(`/admin/jobs/${id}/reject`, { reason }),
+  setJobPremium: (id: number, is_premium: boolean) => api.post(`/admin/jobs/${id}/premium`, { is_premium }),
   updateJobStatus: (id: number, status: string) =>
     api.patch(`/admin/jobs/${id}/status`, null, { params: { status } }),
   auditLogs: (params?: { action?: string; skip?: number; limit?: number }) => api.get("/admin/audit-logs", { params }),

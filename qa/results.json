@@ -1,12 +1,12 @@
 {
-  "run_at": "2026-10-01T23:55:19",
+  "run_at": "2026-10-02T10:07:50",
   "results": [
     {
       "section": "Notifications",
       "item": "N-6a",
       "title": "Failed notifications are logged with the error and a retry time",
       "status": "PASS",
-      "evidence": "portal email #1 status=failed error='simulated delivery failure (EMAIL_BACKEND=fai...' retry scheduled at 2026-10-01 18:25:37.783354; CRM email #1 status=failed"
+      "evidence": "portal email #1 status=failed error='simulated delivery failure (EMAIL_BACKEND=fai...' retry scheduled at 2026-10-02 04:37:51.814072; CRM email #1 status=failed"
     },
     {
       "section": "Notifications",
@@ -167,21 +167,21 @@
       "item": "DB-1",
       "title": "Slow queries",
       "status": "PASS",
-      "evidence": "all key endpoints p95 < 500 ms on seeded data; slowest: CRM GET /jobs/{id} (2,000 applicants) p95 121 ms; requests over 1 s are logged as warnings"
+      "evidence": "all key endpoints p95 < 500 ms on seeded data; slowest: CRM GET /jobs/{id} (2,000 applicants) p95 165 ms; requests over 1 s are logged as warnings"
     },
     {
       "section": "Database Performance",
       "item": "DB-2",
       "title": "Missing database indexes",
       "status": "PASS",
-      "evidence": "11 hot queries use indexes (SQLite EXPLAIN QUERY PLAN); 35 indexes in the portal DB, 81 in the CRM DB"
+      "evidence": "11 hot queries use indexes (SQLite EXPLAIN QUERY PLAN); 40 indexes in the portal DB, 83 in the CRM DB"
     },
     {
       "section": "Database Performance",
       "item": "DB-3",
       "title": "Large candidate / job queries",
       "status": "PASS",
-      "evidence": "5,000+ jobs, 10,000+ candidates, 2,000-applicant jobs: responses capped by page size, totals correct (10010 CRM candidates), applicant lists load candidate names in one query (p95 19 ms / 121 ms)"
+      "evidence": "5,000+ jobs, 10,000+ candidates, 2,000-applicant jobs: responses capped by page size, totals correct (10010 CRM candidates), applicant lists load candidate names in one query (p95 34 ms / 165 ms)"
     },
     {
       "section": "Database Performance",
@@ -195,7 +195,7 @@
       "item": "DB-5",
       "title": "API response time",
       "status": "PASS",
-      "evidence": "every response carries X-Response-Time and X-Request-ID; portal GET /jobs (5,000+ jobs): median 6 ms / p95 8 ms; portal GET /jobs search: median 6 ms / p95 8 ms; portal GET /jobs/{id}/applications (2,000 applicants): median 16 ms / p95 19 ms; portal GET /admin/users: median 5 ms / p95 8 ms; CRM GET /candidates (10,000+): median 14 ms / p95 17 ms; CRM GET /candidates search: median 20 ms / p95 22 ms; CRM GET /leads (3,000+): median 13 ms / p95 15 ms; CRM GET /jobs/{id} (2,000 applicants): median 98 ms / p95 121 ms; CRM GET /analytics/overview: median 18 ms / p95 20 ms"
+      "evidence": "every response carries X-Response-Time and X-Request-ID; portal GET /jobs (5,000+ jobs): median 9 ms / p95 13 ms; portal GET /jobs search: median 10 ms / p95 14 ms; portal GET /jobs/{id}/applications (2,000 applicants): median 24 ms / p95 34 ms; portal GET /admin/users: median 8 ms / p95 15 ms; CRM GET /candidates (10,000+): median 21 ms / p95 27 ms; CRM GET /candidates search: median 33 ms / p95 48 ms; CRM GET /leads (3,000+): median 18 ms / p95 25 ms; CRM GET /jobs/{id} (2,000 applicants): median 143 ms / p95 165 ms; CRM GET /analytics/overview: median 23 ms / p95 33 ms"
     },
     {
       "section": "Database Performance",
@@ -223,7 +223,7 @@
       "item": "P2-3",
       "title": "Backup / recovery",
       "status": "PASS",
-      "evidence": "online backup of the live CRM DB while it was serving traffic (25 tables, 15,219 rows, 871,719 bytes gz), integrity verified, restored copy has the same 10,010 candidates; restore refuses to overwrite without --force and keeps the old DB; nightly cron + pre-deploy backup installed by update.sh"
+      "evidence": "online backup of the live CRM DB while it was serving traffic (25 tables, 15,223 rows, 875,876 bytes gz), integrity verified, restored copy has the same 10,010 candidates; restore refuses to overwrite without --force and keeps the old DB; nightly cron + pre-deploy backup installed by update.sh"
     },
     {
       "section": "P2",
@@ -263,16 +263,37 @@
     {
       "section": "Meeting feedback",
       "item": "X-5",
-      "title": "Portal jobs and applicants reach the CRM automatically (Open Jobs no longer 0)",
+      "title": "Premium portal jobs and applicants reach the CRM automatically; free jobs stay out",
       "status": "PASS",
-      "evidence": "the approved portal job appeared in the CRM by itself as an open job with education, locality, monthly pay and who posted it; the dashboard's Open Jobs count is 3; the applicant became a CRM candidate with education, expected salary, location and their resume; moving the application on the portal moved it in the CRM; a job awaiting approval shows 'on hold' and a deleted one is closed; a CRM user's own status is kept; HR can see the sync status but only owner/BDM can press Sync now"
+      "evidence": "free portal jobs stay out of the CRM; once an admin marks a job premium (client pays) it appears in the CRM by itself with education, locality, monthly pay and who posted it, and its applicant arrives with education, expected salary, location and resume; portal status changes move the CRM pipeline; a premium job awaiting approval is 'on hold', a deleted one is closed; marking a job filled in the CRM closes it on the portal; making a job free again closes it in the CRM; only owner/BDM can press Sync now"
+    },
+    {
+      "section": "Meeting feedback",
+      "item": "X-7",
+      "title": "PRIORITY FLOW: CRM job -> portal -> search -> apply -> CRM -> status both ways, no duplicates",
+      "status": "PASS",
+      "evidence": "job created in the CRM was live on the portal immediately (premium, client name, education, locality, monthly pay); found by search with 'Bangalore' and with all filters combined, and each filter excludes it when it doesn't match; candidate applied with resume; after two syncs the CRM has exactly 1 job, 1 candidate (with resume, phone, education, location, expected pay) and 1 application; CRM stage changes showed on the candidate's portal dashboard and emailed them; a portal status change reached the CRM; a CRM salary edit updated the portal; the deadline passing closed the job on both sides"
+    },
+    {
+      "section": "Meeting feedback",
+      "item": "X-8",
+      "title": "Job filters work alone and together; monthly vs yearly salary handled correctly",
+      "status": "PASS",
+      "evidence": "11 filter checks pass on the API (qualification, city with other spellings, area, experience range, several job types, monthly pay) including combinations; pay filters convert yearly salaries to monthly (4.8L/year = 40k/month) and never compare raw yearly numbers; 'highest pay' sorting uses monthly pay; job salary and the candidate's expected salary are separate fields"
+    },
+    {
+      "section": "Meeting feedback",
+      "item": "X-9",
+      "title": "API security: no access to others' jobs/candidates by changing IDs; secrets stay server-side",
+      "status": "PASS",
+      "evidence": "10 cross-account and unauthenticated attempts were refused (403, 404): another recruiter can't read, edit, delete or move a job's applicants by changing IDs, only admins approve or set premium, the CRM link needs its key; bad input -> 422 on both apps; no secrets in browser code (only the public API and site addresses)"
     },
     {
       "section": "Meeting feedback",
       "item": "X-6",
       "title": "The portal-CRM link is private",
       "status": "PASS",
-      "evidence": "the portal's CRM feed refuses requests without the key (403) or with a wrong key (403), and refuses anything arriving through the public website even with the right key (404); only the CRM on the same server can read it"
+      "evidence": "the portal's CRM link refuses requests without the key (403) or with a wrong key (403), and refuses anything arriving through the public website even with the right key (404); only the CRM on the same server can use it"
     }
   ]
 }

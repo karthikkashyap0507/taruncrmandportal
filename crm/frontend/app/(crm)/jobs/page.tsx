@@ -19,6 +19,7 @@ function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; on
     title: job?.title || "", client_name: job?.client_name || "",
     location: job?.location || "", locality: job?.locality || "", education: job?.education || "",
     salary_period: job?.salary_period || "month", job_type: job?.job_type || "full-time",
+    publish_on_portal: job ? job.publish_on_portal !== false : true,
     experience_min: job?.experience_min || "", experience_max: job?.experience_max || "",
     salary_min: job?.salary_min || "", salary_max: job?.salary_max || "",
     positions: job?.positions || 1, status: job?.status || "open",
@@ -41,9 +42,11 @@ function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; on
         education: form.education || undefined,
         locality: form.locality || undefined,
       };
-      if (job?.id) await jobsApi.update(job.id, payload);
-      else await jobsApi.create(payload);
-      toast.success(job?.id ? "Job updated" : "Job created");
+      const res = job?.id ? await jobsApi.update(job.id, payload) : await jobsApi.create(payload);
+      const saved = res.data;
+      if (saved.portal_push_pending) toast("Saved. The job portal couldn't be reached; it will be published automatically.", { icon: "⏳" });
+      else if (saved.portal_url) toast.success(job?.id ? "Job updated on the CRM and the portal" : "Job created and published on the portal");
+      else toast.success(job?.id ? "Job updated" : "Job created");
       onSaved(); onClose();
     } catch (e: any) { toast.error(apiError(e, "Failed")); }
     finally { setSaving(false); }
@@ -108,6 +111,16 @@ function JobForm({ job, onClose, onSaved }: { job?: any; onClose: () => void; on
               {JOB_STATUSES.map(s => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
             </select>
           </div>
+          {(!job?.source || job?.source !== "portal") && (
+            <label className="sm:col-span-2 flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+              <input type="checkbox" className="mt-0.5" checked={form.publish_on_portal}
+                onChange={e => setForm({ ...form, publish_on_portal: e.target.checked })} />
+              <span>
+                <span className="font-medium">Publish on the JobsNexGen job portal</span>
+                <span className="block text-xs text-gray-500">Candidates can find and apply on www.jobsnexgen.com; applicants come back here automatically. Unticking (or closing the job) takes it off the portal.</span>
+              </span>
+            </label>
+          )}
           <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Required Skills (comma separated)</label>
             <input className="input" value={form.skills_required} onChange={e => setForm({ ...form, skills_required: e.target.value })} placeholder="React, Node.js, SQL..." />
@@ -187,7 +200,9 @@ export default function JobsPage() {
             <span>Job portal sync isn&apos;t set up on the server yet (missing integration key).</span>
           ) : (
             <span>
-              Job portal: {sync.synced_jobs} job{sync.synced_jobs !== 1 ? "s" : ""} synced ({sync.open_portal_jobs} open)
+              Job portal: {sync.published_crm_jobs} CRM job{sync.published_crm_jobs !== 1 ? "s" : ""} live on the portal
+              {" · "}{sync.open_portal_jobs} open premium job{sync.open_portal_jobs !== 1 ? "s" : ""} from the portal
+              {sync.waiting_to_publish > 0 && <>{" · "}{sync.waiting_to_publish} waiting to publish</>}
               {" · "}
               {sync.last_success_at ? `last synced ${formatDistanceToNow(new Date(sync.last_success_at + (String(sync.last_success_at).endsWith("Z") || String(sync.last_success_at).includes("+") ? "" : "Z")), { addSuffix: true })}` : "not synced yet"}
               {" · syncs every "}{Math.round((sync.interval_seconds || 120) / 60)} min
@@ -230,7 +245,9 @@ export default function JobsPage() {
               </div>
               <div className="flex flex-col items-end gap-1">
                 <span className={`badge ${STATUS_COLORS[j.status] || "badge-gray"}`}>{j.status.replace("_", " ")}</span>
-                {j.source === "portal" && <span className="badge badge-blue text-[10px]">Portal</span>}
+                {j.source === "portal" && <span className="badge badge-yellow text-[10px]">Premium · from portal</span>}
+                {j.source !== "portal" && j.portal_url && <span className="badge badge-blue text-[10px]">On portal</span>}
+                {j.portal_push_pending && <span className="badge badge-gray text-[10px]">Publishing…</span>}
               </div>
             </div>
             {j.portal_status === "pending" && (

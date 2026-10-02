@@ -76,8 +76,9 @@ export default function JobDetailPage() {
 
   async function moveStage(appId: number, stage: string) {
     try {
-      await jobsApi.updateStage(Number(id), appId, stage);
-      toast.success("Stage updated");
+      const res = await jobsApi.updateStage(Number(id), appId, stage);
+      if (res.data?.portal_note) toast(res.data.portal_note, { icon: "⏳" });
+      else toast.success("Stage updated");
       qc.invalidateQueries({ queryKey: ["job", id] });
     } catch (e: any) {
       toast.error(apiError(e, "Failed to update stage"));
@@ -222,7 +223,19 @@ export default function JobDetailPage() {
         {/* Right column */}
         <div className="space-y-5">
           <Section title="Meta">
-            <InfoRow label="Source" value={job.source === "portal" ? "Job portal" : "Added in CRM"} icon={TrendingUp} />
+            <InfoRow label="Source" value={job.source === "portal" ? "Job portal (premium)" : "Added in CRM"} icon={TrendingUp} />
+            {job.source !== "portal" && (
+              <InfoRow label="On the portal"
+                value={job.portal_push_pending ? "Waiting to publish (retrying)"
+                  : job.portal_url ? "Live" : job.publish_on_portal === false ? "Not published" : job.status === "open" ? "Not live" : "Closed"}
+                icon={Tag} />
+            )}
+            {job.portal_url && (
+              <a href={job.portal_url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-sm text-brand-600 hover:underline">
+                View on the job portal →
+              </a>
+            )}
+            {job.portal_push_error && <p className="mt-1 text-xs text-red-600">Last publish attempt: {job.portal_push_error}</p>}
             {job.portal_job_id != null && <InfoRow label="Portal ID" value={job.portal_job_id} icon={Tag} />}
             {job.posted_by && <InfoRow label="Posted by" value={job.posted_by} icon={User} />}
             {job.portal_status === "pending" && <InfoRow label="Portal status" value="Waiting for admin approval" icon={Clock} />}
@@ -274,6 +287,7 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
     locality: job.locality || "",
     education: job.education || "",
     salary_period: job.salary_period || "month",
+    publish_on_portal: job.publish_on_portal !== false,
     job_type: job.job_type || "full-time",
     experience_min: job.experience_min != null ? String(job.experience_min) : "",
     experience_max: job.experience_max != null ? String(job.experience_max) : "",
@@ -290,7 +304,7 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
     if (!form.title.trim()) { toast.error("Title is required"); return; }
     setSaving(true);
     try {
-      await jobsApi.update(job.id, {
+      const res = await jobsApi.update(job.id, {
         ...form,
         experience_min: form.experience_min ? parseFloat(form.experience_min) : undefined,
         experience_max: form.experience_max ? parseFloat(form.experience_max) : undefined,
@@ -301,7 +315,8 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
         education: form.education || undefined,
         locality: form.locality || undefined,
       });
-      toast.success("Job updated");
+      if (res.data.portal_push_pending) toast("Saved. The job portal couldn't be reached; it will update automatically.", { icon: "⏳" });
+      else toast.success("Job updated");
       onSaved();
       onClose();
     } catch (e: any) {
@@ -366,6 +381,16 @@ function EditJobModal({ job, onClose, onSaved }: { job: any; onClose: () => void
               {JOB_STATUSES.map(s => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
             </select>
           </div>
+          {(!job?.source || job?.source !== "portal") && (
+            <label className="sm:col-span-2 flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+              <input type="checkbox" className="mt-0.5" checked={form.publish_on_portal}
+                onChange={e => setForm({ ...form, publish_on_portal: e.target.checked })} />
+              <span>
+                <span className="font-medium">Publish on the JobsNexGen job portal</span>
+                <span className="block text-xs text-gray-500">Candidates can find and apply on www.jobsnexgen.com; applicants come back here automatically. Unticking (or closing the job) takes it off the portal.</span>
+              </span>
+            </label>
+          )}
           <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Skills Required (comma separated)</label>
             <input

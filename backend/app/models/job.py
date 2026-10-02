@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -36,6 +36,7 @@ class Job(Base):
     salary_max: Mapped[int | None] = mapped_column(Integer)
     skills: Mapped[list | None] = mapped_column(JSON, default=list)
     experience_level: Mapped[str | None] = mapped_column(String(100))
+    experience_min_years: Mapped[float | None] = mapped_column(Float, index=True)  # parsed from experience_level
     location: Mapped[str | None] = mapped_column(String(255))       # city, e.g. Bengaluru
     locality: Mapped[str | None] = mapped_column(String(120))       # area, e.g. JP Nagar
     education: Mapped[str | None] = mapped_column(String(20), index=True)
@@ -43,6 +44,11 @@ class Job(Base):
     employment_type: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.published, index=True)
     review_note: Mapped[str | None] = mapped_column(Text)
+    # Premium = a client pays JobsNexGen for this job; only premium jobs are worked in the CRM
+    is_premium: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", index=True)
+    source: Mapped[str | None] = mapped_column(String(20), default="portal")   # portal | crm
+    crm_job_id: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
